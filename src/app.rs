@@ -1,0 +1,380 @@
+use std::process::Command;
+
+use eframe::egui;
+use egui::{
+    epaint::{CubicBezierShape, PathShape},
+    Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2,
+};
+use git2::Repository;
+
+use crate::commit::{self, CommitRow};
+use crate::config;
+use crate::diff;
+
+pub struct App {
+    pub repo_path: String,
+    pub rows: Vec<CommitRow>,
+    pub selected: Option<usize>,
+    pub search: String,
+    pub diff_text: Option<String>,
+    pub limit: usize,
+    pub all_refs: bool,
+    pub error: Option<String>,
+    pub graph_width: f32,
+}
+
+impl App {
+    pub fn new(repo_path: String, limit: usize, all_refs: bool) -> Self {
+        let mut app = App {
+            repo_path,
+            rows: Vec::new(),
+            selected: None,
+            search: String::new(),
+            diff_text: None,
+            limit,
+            all_refs,
+            error: None,
+            graph_width: 0.0,
+        };
+        app.reload();
+        app
+    }
+
+    fn reload(&mut self) {
+        match Repository::discover(&self.repo_path) {
+            Ok(repo) => match commit::build_rows(&repo, self.limit, self.all_refs) {
+                Ok(rows) => {
+                    self.graph_width =
+                        config::GRAPH_PAD_LEFT + commit::max_lanes(&rows) as f32 * config::LANE_WIDTH + config::GRAPH_PAD_RIGHT;
+                    self.rows = rows;
+                    self.selected = if self.rows.is_empty() { None } else { Some(0) };
+                    self.error = None;
+                }
+                Err(e) => self.error = Some(format!("failed to read commits: {e}")),
+            },
+            Err(e) => self.error = Some(format!("not a git repository: {e}")),
+        }
+    }
+
+    fn load_diff(&mut self, full: bool) {
+        if let Some(i) = self.selected {
+            let hash = self.rows[i].oid.to_string();
+            let mut args = vec!["show"];
+            if !full {
+                args.push("--stat");
+            }
+            args.push(&hash);
+            let out = Command::new("git")
+                .current_dir(&self.repo_path)
+                .args(&args)
+                .output();
+            self.diff_text = match out {
+                Ok(o) => Some(String::from_utf8_lossy(&o.stdout).to_string()),
+                Err(e) => Some(format!("failed to run git show: {e}")),
+            };
+        }
+    }
+
+    fn find_next(&mut self) {
+        if self.search.is_empty() || self.rows.is_empty() {
+            return;
+        }
+        let q = self.search.to_lowercase();
+        let n = self.rows.len();
+        let start = self.selected.unwrap_or(0);
+        for d in 1..=n {
+            let i = (start + d) % n;
+            let r = &self.rows[i];
+            if r.summary.to_lowercase().contains(&q)
+                || r.author.to_lowercase().contains(&q)
+                || r.short.contains(&q)
+            {
+                self.selected = Some(i);
+                return;
+            }
+        }
+    }
+}
+
+impl eframe::App for App {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::TopBottomPanel::top("top").show(ctx, |ui| {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(&self.repo_path).strong());
+                ui.separator();
+                if ui.button("Refresh").clicked() {
+                    self.reload();
+                }
+                ui.separator();
+                ui.checkbox(&mut self.all_refs, "all refs");
+                ui.separator();
+                ui.label("limit");
+                let mut limit_str = self.limit.to_string();
+                if ui.add(egui::TextEdit::singleline(&mut limit_str).desired_width(60.0)).changed() {
+                    if let Ok(v) = limit_str.parse() {
+                        self.limit = v;
+                    }
+                }
+                ui.separator();
+                ui.label("search");
+                let resp = ui.add(egui::TextEdit::singleline(&mut self.search).desired_width(160.0));
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    self.find_next();
+                }
+                if ui.button("Find next").clicked() {
+                    self.find_next();
+                }
+                ui.separator();
+                ui.label(format!("{} commits", self.rows.len()));
+            });
+            ui.add_space(4.0);
+        });
+
+        if let Some(err) = &self.error {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), err);
+            });
+            return;
+        }
+
+        egui::SidePanel::right("details")
+            .min_width(520.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                draw_details(self, ui);
+            });
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            draw_graph(self, ui);
+        });
+    }
+}
+
+fn draw_details(app: &mut App, ui: &mut egui::Ui) {
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        let Some(i) = app.selected else {
+            ui.label("no commit selected");
+            return;
+        };
+        let row_info = {
+            let row = &app.rows[i];
+            (
+                row.oid.to_string(),
+                row.author.clone(),
+                row.email.clone(),
+                commit::format_time(row.time, row.offset_min),
+                row.summary.clone(),
+                row.branches.clone(),
+                row.tags.clone(),
+            )
+        };
+        let (hash, author, email, date, summary, branches, tags) = row_info;
+
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new(&summary).strong().size(15.0));
+        ui.add_space(6.0);
+        ui.monospace(&hash);
+        ui.label(format!("{author} <{email}>"));
+        ui.label(date);
+        if !branches.is_empty() {
+            ui.label(format!("branches: {}", branches.join(", ")));
+        }
+        if !tags.is_empty() {
+            ui.label(format!("tags: {}", tags.join(", ")));
+        }
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if ui.button("Full diff").clicked() {
+                app.load_diff(true);
+            }
+            if ui.button("Stat only").clicked() {
+                app.load_diff(false);
+            }
+            if ui.button("Clear").clicked() {
+                app.diff_text = None;
+            }
+        });
+        ui.separator();
+        if let Some(diff) = &app.diff_text {
+            diff::draw_diff(ui, diff);
+        }
+    });
+}
+
+fn draw_graph(app: &mut App, ui: &mut egui::Ui) {
+    let total_height = app.rows.len() as f32 * config::ROW_HEIGHT + config::ROW_HEIGHT;
+    let text_col_x = app.graph_width;
+
+    egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+        let width = ui.available_width().max(text_col_x + 600.0);
+        let (rect, response) = ui.allocate_exact_size(Vec2::new(width, total_height), Sense::click());
+        let painter = ui.painter_at(rect);
+        let origin = rect.min;
+
+        let hover_row = response.hover_pos().and_then(|pos| {
+            let idx = ((pos.y - origin.y) / config::ROW_HEIGHT) as usize;
+            (idx < app.rows.len()).then_some(idx)
+        });
+
+        if response.clicked() {
+            if let Some(idx) = hover_row {
+                app.selected = Some(idx);
+                app.diff_text = None;
+            }
+        }
+
+        let y_center = |i: usize| origin.y + i as f32 * config::ROW_HEIGHT + config::ROW_HEIGHT / 2.0;
+        let x_lane = |l: usize| origin.x + config::GRAPH_PAD_LEFT + l as f32 * config::LANE_WIDTH;
+
+        let x_hash = rect.max.x - config::GRAPH_PAD_RIGHT;
+        let x_date = x_hash - config::COL_HASH;
+        let x_author = x_date - config::COL_DATE;
+        let x_msg_end = x_author - config::COL_AUTHOR - 12.0;
+
+        for i in 0..app.rows.len() {
+            let top = origin.y + i as f32 * config::ROW_HEIGHT;
+            let full = Rect::from_min_size(Pos2::new(rect.min.x, top), Vec2::new(rect.width(), config::ROW_HEIGHT));
+            if app.selected == Some(i) {
+                painter.rect_filled(full, 0.0, config::C_SEL);
+            } else if hover_row == Some(i) {
+                painter.rect_filled(full, 0.0, config::C_HOVER);
+            }
+        }
+
+        for (i, row) in app.rows.iter().enumerate() {
+            let yc = y_center(i);
+            let yc_next = y_center(i + 1);
+
+            for &l in &row.passthrough {
+                let x = x_lane(l);
+                painter.line_segment(
+                    [Pos2::new(x, yc), Pos2::new(x, yc_next)],
+                    Stroke::new(config::LINE_WIDTH, config::lane_color(l)),
+                );
+            }
+
+            let x_my = x_lane(row.lane);
+            for &pl in &row.parent_lanes {
+                let x_p = x_lane(pl);
+                if pl == row.lane {
+                    painter.line_segment(
+                        [Pos2::new(x_my, yc), Pos2::new(x_p, yc_next)],
+                        Stroke::new(config::LINE_WIDTH, config::lane_color(row.lane)),
+                    );
+                } else {
+                    let dx = (x_p - x_my).abs();
+                    let ease = (config::ROW_HEIGHT * 0.5).max(dx * 0.35).min(config::ROW_HEIGHT * 0.85);
+                    let points = [
+                        Pos2::new(x_my, yc),
+                        Pos2::new(x_my, yc + ease),
+                        Pos2::new(x_p, yc_next - ease),
+                        Pos2::new(x_p, yc_next),
+                    ];
+                    let bez = CubicBezierShape::from_points_stroke(
+                        points,
+                        false,
+                        Color32::TRANSPARENT,
+                        Stroke::new(config::LINE_WIDTH, config::lane_color(pl)),
+                    );
+                    painter.add(bez);
+                }
+            }
+        }
+
+        for (i, row) in app.rows.iter().enumerate() {
+            let center = Pos2::new(x_lane(row.lane), y_center(i));
+            let node_color = config::lane_color(row.lane);
+            if row.is_head {
+                painter.circle_filled(center, config::NODE_RADIUS + 1.5, Color32::from_rgb(0x1e, 0x1e, 0x2e));
+                painter.circle_stroke(center, config::NODE_RADIUS, Stroke::new(2.2_f32, node_color));
+            } else {
+                painter.circle_filled(center, config::NODE_RADIUS, node_color);
+            }
+        }
+
+        for (i, row) in app.rows.iter().enumerate() {
+            let yc = y_center(i);
+            let mut tx = text_col_x;
+
+            if row.is_head {
+                tx = draw_pill(&painter, tx, yc, "HEAD", config::C_TEXT, Color32::from_rgb(0xf3, 0x8b, 0xa8));
+            }
+            for b in &row.branches {
+                tx = draw_pill(&painter, tx, yc, b, config::C_TEXT, Color32::from_rgb(0x89, 0xb4, 0xfa));
+            }
+            for t in &row.tags {
+                tx = draw_pill(&painter, tx, yc, t, Color32::from_rgb(0x1e, 0x1e, 0x2e), Color32::from_rgb(0xfa, 0xb3, 0x87));
+            }
+
+            let msg = elide(&painter, &row.summary, FontId::proportional(12.5), x_msg_end - tx);
+            painter.text(
+                Pos2::new(tx, yc),
+                egui::Align2::LEFT_CENTER,
+                &msg,
+                FontId::proportional(12.5),
+                config::C_TEXT,
+            );
+
+            let author = elide(&painter, &row.author, FontId::proportional(11.5), config::COL_AUTHOR - 8.0);
+            painter.text(
+                Pos2::new(x_author, yc),
+                egui::Align2::LEFT_CENTER,
+                &author,
+                FontId::proportional(11.5),
+                config::C_SUBTEXT,
+            );
+
+            painter.text(
+                Pos2::new(x_date, yc),
+                egui::Align2::LEFT_CENTER,
+                commit::format_time(row.time, row.offset_min),
+                FontId::proportional(11.5),
+                config::C_SUBTEXT,
+            );
+
+            painter.text(
+                Pos2::new(x_hash, yc),
+                egui::Align2::RIGHT_CENTER,
+                &row.short,
+                FontId::monospace(11.0),
+                config::C_HASH,
+            );
+        }
+
+        let _ = PathShape::convex_polygon(vec![], Color32::TRANSPARENT, Stroke::NONE);
+    });
+}
+
+fn draw_pill(painter: &egui::Painter, x: f32, y: f32, label: &str, fg: Color32, bg: Color32) -> f32 {
+    let font = FontId::proportional(10.5);
+    let galley = painter.layout_no_wrap(label.to_string(), font, fg);
+    let w = galley.size().x + 12.0;
+    let h = 16.0;
+    let rect = Rect::from_min_size(Pos2::new(x, y - h / 2.0), Vec2::new(w, h));
+    painter.rect_filled(rect, 8.0, bg);
+    painter.galley(rect.min + Vec2::new(6.0, (h - galley.size().y) / 2.0), galley, fg);
+    rect.max.x + 5.0
+}
+
+fn elide(painter: &egui::Painter, text: &str, font: FontId, max_w: f32) -> String {
+    if max_w <= 0.0 {
+        return String::new();
+    }
+    let full = painter.layout_no_wrap(text.to_string(), font.clone(), Color32::WHITE);
+    if full.size().x <= max_w {
+        return text.to_string();
+    }
+    let mut end = text.len();
+    while end > 0 {
+        if text.is_char_boundary(end) {
+            let candidate = format!("{}…", &text[..end]);
+            let g = painter.layout_no_wrap(candidate.clone(), font.clone(), Color32::WHITE);
+            if g.size().x <= max_w {
+                return candidate;
+            }
+        }
+        end -= 1;
+    }
+    String::from("…")
+}
