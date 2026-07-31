@@ -21,6 +21,9 @@ pub struct App {
     pub all_refs: bool,
     pub error: Option<String>,
     pub graph_width: f32,
+    pub changed_files: Vec<String>,
+    pub selected_file: Option<String>,
+    pub file_diff: Option<String>,
 }
 
 impl App {
@@ -35,6 +38,9 @@ impl App {
             all_refs,
             error: None,
             graph_width: 0.0,
+            changed_files: Vec::new(),
+            selected_file: None,
+            file_diff: None,
         };
         app.reload();
         app
@@ -49,7 +55,11 @@ impl App {
                     self.rows = rows;
                     self.selected = if self.rows.is_empty() { None } else { Some(0) };
                     self.diff_text = None;
+                    self.changed_files.clear();
+                    self.selected_file = None;
+                    self.file_diff = None;
                     if self.selected.is_some() {
+                        self.load_changed_files();
                         self.load_diff(false);
                     }
                     self.error = None;
@@ -57,6 +67,34 @@ impl App {
                 Err(e) => self.error = Some(format!("failed to read commits: {e}")),
             },
             Err(e) => self.error = Some(format!("not a git repository: {e}")),
+        }
+    }
+
+    fn load_changed_files(&mut self) {
+        if let Some(i) = self.selected {
+            let hash = self.rows[i].oid.to_string();
+            if let Ok(out) = Command::new("git")
+                .current_dir(&self.repo_path)
+                .args(&["diff-tree", "--no-commit-id", "-r", "--name-only", &hash])
+                .output()
+            {
+                let text = String::from_utf8_lossy(&out.stdout);
+                self.changed_files = text.lines().filter(|l| !l.is_empty()).map(String::from).collect();
+            }
+        }
+    }
+
+    fn load_file_diff(&mut self, file: &str) {
+        if let Some(i) = self.selected {
+            let hash = self.rows[i].oid.to_string();
+            if let Ok(out) = Command::new("git")
+                .current_dir(&self.repo_path)
+                .args(&["show", &hash, "--", file])
+                .output()
+            {
+                self.file_diff = Some(String::from_utf8_lossy(&out.stdout).to_string());
+                self.selected_file = Some(file.to_string());
+            }
         }
     }
 
@@ -165,7 +203,47 @@ impl eframe::App for App {
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            draw_graph(self, ui);
+            let file_count = self.changed_files.len();
+            if file_count > 0 {
+                // Reserve space at the bottom for the file list.
+                let file_h = file_count as f32 * 19.0 + 44.0;
+                let rects = ui.max_rect();
+                let (graph_rect, file_rect) = rects.split_top_bottom_at_y(rects.height() - file_h);
+
+                // Graph area
+                let mut graph_ui = ui.child_ui(graph_rect, egui::Layout::top_down(egui::Align::LEFT), None);
+                egui::ScrollArea::both().auto_shrink([false, false]).show(&mut graph_ui, |ui| {
+                    draw_graph_inner(self, ui);
+                });
+
+                // File list area
+                let mut file_ui = ui.child_ui(file_rect, egui::Layout::top_down(egui::Align::LEFT), None);
+                file_ui.separator();
+                file_ui.add_space(2.0);
+                file_ui.label(egui::RichText::new(format!("files changed  {}", file_count)).size(11.0).color(config::C_SUBTEXT));
+                let file_font = FontId::monospace(12.0);
+                let files: Vec<String> = self.changed_files.clone();
+                let mut clicked: Option<String> = None;
+                let sel = self.selected_file.clone();
+                for file in &files {
+                    let selected = sel.as_deref() == Some(file.as_str());
+                    let color = if selected { Color32::from_rgb(0x89, 0xb4, 0xfa) } else { config::C_TEXT };
+                    let resp = file_ui.add(
+                        egui::Label::new(egui::RichText::new(file).color(color).font(file_font.clone()))
+                            .sense(Sense::click()),
+                    );
+                    if resp.clicked() {
+                        clicked = Some(file.clone());
+                    }
+                }
+                if let Some(f) = clicked {
+                    self.load_file_diff(&f);
+                }
+            } else {
+                egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+                    draw_graph_inner(self, ui);
+                });
+            }
         });
     }
 }
@@ -203,17 +281,21 @@ fn draw_details(app: &mut App, ui: &mut egui::Ui) {
             ui.label(format!("tags: {}", tags.join(", ")));
         }
         ui.add_space(8.0);
-        if let Some(diff) = &app.diff_text {
+        if let Some(file_diff) = &app.file_diff {
+            if let Some(file) = &app.selected_file {
+                ui.label(egui::RichText::new(file).strong().size(12.0).color(Color32::from_rgb(0x89, 0xb4, 0xfa)));
+            }
+            ui.add_space(2.0);
+            diff::draw_diff(ui, file_diff);
+        } else if let Some(diff) = &app.diff_text {
             diff::draw_diff(ui, diff);
         }
     });
 }
 
-fn draw_graph(app: &mut App, ui: &mut egui::Ui) {
+fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
     let total_height = app.rows.len() as f32 * config::ROW_HEIGHT + config::ROW_HEIGHT;
     let text_col_x = app.graph_width;
-
-    egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
         let width = ui.available_width().max(text_col_x + 600.0);
         let (rect, response) = ui.allocate_exact_size(Vec2::new(width, total_height), Sense::click());
         let painter = ui.painter_at(rect);
@@ -228,6 +310,9 @@ fn draw_graph(app: &mut App, ui: &mut egui::Ui) {
             if let Some(idx) = hover_row {
                 app.selected = Some(idx);
                 app.diff_text = None;
+                app.file_diff = None;
+                app.selected_file = None;
+                app.load_changed_files();
                 app.load_diff(false);
             }
         }
@@ -305,13 +390,17 @@ fn draw_graph(app: &mut App, ui: &mut egui::Ui) {
             let yc = y_center(i);
             let mut tx = text_col_x;
 
-            if row.is_head {
+            // Cap pills so they don't extend into the metadata columns.
+            let cap_x = x_author - 20.0;
+            if row.is_head && tx < cap_x {
                 tx = draw_pill(&painter, tx, yc, "HEAD", Color32::from_rgb(0x1e, 0x1e, 0x2e), Color32::from_rgb(0xf3, 0x8b, 0xa8));
             }
             for b in &row.branches {
+                if tx >= cap_x { break; }
                 tx = draw_pill(&painter, tx, yc, b, Color32::from_rgb(0x1e, 0x1e, 0x2e), Color32::from_rgb(0x89, 0xb4, 0xfa));
             }
             for t in &row.tags {
+                if tx >= cap_x { break; }
                 tx = draw_pill(&painter, tx, yc, t, Color32::from_rgb(0x1e, 0x1e, 0x2e), Color32::from_rgb(0xfa, 0xb3, 0x87));
             }
 
@@ -351,7 +440,6 @@ fn draw_graph(app: &mut App, ui: &mut egui::Ui) {
         }
 
         let _ = PathShape::convex_polygon(vec![], Color32::TRANSPARENT, Stroke::NONE);
-    });
 }
 
 fn draw_pill(painter: &egui::Painter, x: f32, y: f32, label: &str, fg: Color32, bg: Color32) -> f32 {
