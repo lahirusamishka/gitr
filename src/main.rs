@@ -23,10 +23,24 @@ const LANE_COLORS: [Color32; 6] = [
     Color32::from_rgb(0x89, 0xdc, 0xeb), // sky
 ];
 
-const ROW_HEIGHT: f32 = 20.0;
-const LANE_WIDTH: f32 = 16.0;
-const NODE_RADIUS: f32 = 3.5;
-const LINE_WIDTH: f32 = 1.8;
+const ROW_HEIGHT: f32 = 24.0;
+const LANE_WIDTH: f32 = 14.0;
+const NODE_RADIUS: f32 = 5.0;
+const LINE_WIDTH: f32 = 2.0;
+const GRAPH_PAD_LEFT: f32 = 12.0;
+const GRAPH_PAD_RIGHT: f32 = 16.0;
+
+// column widths for the right-aligned metadata block (author | date | hash)
+const COL_AUTHOR: f32 = 150.0;
+const COL_DATE: f32 = 130.0;
+const COL_HASH: f32 = 72.0;
+
+// palette (Catppuccin Mocha)
+const C_TEXT: Color32 = Color32::from_rgb(0xcd, 0xd6, 0xf4);
+const C_SUBTEXT: Color32 = Color32::from_rgb(0x93, 0x99, 0xb2);
+const C_HASH: Color32 = Color32::from_rgb(0xf9, 0xe2, 0xaf);
+const C_SEL: Color32 = Color32::from_rgba_premultiplied(0x31, 0x32, 0x44, 200);
+const C_HOVER: Color32 = Color32::from_rgba_premultiplied(0x28, 0x28, 0x38, 120);
 
 fn lane_color(lane: usize) -> Color32 {
     LANE_COLORS[lane % LANE_COLORS.len()]
@@ -106,6 +120,21 @@ fn build_rows(repo: &Repository, limit: usize, all_refs: bool) -> Result<Vec<Com
 
     let mut active_lanes: HashMap<Oid, usize> = HashMap::new();
     let mut next_free_lane: usize = 0;
+    // Reclaimed lane columns, kept sorted so the lowest free lane is reused
+    // first — this keeps the graph packed to the left.
+    let mut free_lanes: Vec<usize> = Vec::new();
+
+    // Allocate the lowest available lane: prefer a recycled one, else a new one.
+    let alloc_lane = |free_lanes: &mut Vec<usize>, next_free_lane: &mut usize| -> usize {
+        if let Some(l) = free_lanes.pop() {
+            l
+        } else {
+            let l = *next_free_lane;
+            *next_free_lane += 1;
+            l
+        }
+    };
+
     let mut rows = Vec::new();
 
     for oid_res in revwalk.take(limit) {
@@ -117,9 +146,7 @@ fn build_rows(repo: &Repository, limit: usize, all_refs: bool) -> Result<Vec<Com
         let my_lane = if let Some(l) = active_lanes.remove(&oid) {
             l
         } else {
-            let l = next_free_lane;
-            next_free_lane += 1;
-            l
+            alloc_lane(&mut free_lanes, &mut next_free_lane)
         };
 
         // Snapshot of lanes that were already alive *before* this commit touches
@@ -132,6 +159,10 @@ fn build_rows(repo: &Repository, limit: usize, all_refs: bool) -> Result<Vec<Com
         passthrough.sort_unstable();
         passthrough.dedup();
 
+        // Lanes that were alive going *into* this row.
+        let mut alive_before: Vec<usize> = passthrough.clone();
+        alive_before.push(my_lane);
+
         // Now place each parent into a lane (first parent continues our lane).
         let mut parent_lanes = Vec::with_capacity(parents.len());
         for (i, pid) in parents.iter().enumerate() {
@@ -141,15 +172,25 @@ fn build_rows(repo: &Repository, limit: usize, all_refs: bool) -> Result<Vec<Com
                 let l = if i == 0 {
                     my_lane
                 } else {
-                    let l = next_free_lane;
-                    next_free_lane += 1;
-                    l
+                    alloc_lane(&mut free_lanes, &mut next_free_lane)
                 };
                 active_lanes.insert(*pid, l);
                 l
             };
             parent_lanes.push(lane);
         }
+
+        // Reclaim any lane that was alive before this row but no longer has a
+        // future commit waiting on it — a branch tip or a fully-merged lane.
+        // Those columns become available for later diverging branches so the
+        // graph stays packed to the left instead of drifting right.
+        for l in alive_before {
+            if !active_lanes.values().any(|&al| al == l) && !free_lanes.contains(&l) {
+                free_lanes.push(l);
+            }
+        }
+        // Keep highest lane at the end so pop() hands out the lowest first.
+        free_lanes.sort_unstable_by(|a, b| b.cmp(a));
 
         let author = commit.author();
         let time = commit.time();
@@ -230,7 +271,8 @@ impl App {
         match Repository::discover(&self.repo_path) {
             Ok(repo) => match build_rows(&repo, self.limit, self.all_refs) {
                 Ok(rows) => {
-                    self.graph_width = max_lanes(&rows) as f32 * LANE_WIDTH + 12.0;
+                    self.graph_width =
+                        GRAPH_PAD_LEFT + max_lanes(&rows) as f32 * LANE_WIDTH + GRAPH_PAD_RIGHT;
                     self.rows = rows;
                     self.selected = if self.rows.is_empty() { None } else { Some(0) };
                     self.error = None;
@@ -406,35 +448,45 @@ fn draw_graph(app: &mut App, ui: &mut egui::Ui) {
         let painter = ui.painter_at(rect);
         let origin = rect.min;
 
-        // Handle clicks -> select row
+        // pointer -> which row is under the cursor
+        let hover_row = response.hover_pos().and_then(|pos| {
+            let idx = ((pos.y - origin.y) / ROW_HEIGHT) as usize;
+            (idx < app.rows.len()).then_some(idx)
+        });
+
         if response.clicked() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let row_idx = ((pos.y - origin.y) / ROW_HEIGHT) as usize;
-                if row_idx < app.rows.len() {
-                    app.selected = Some(row_idx);
-                    app.diff_text = None;
-                }
+            if let Some(idx) = hover_row {
+                app.selected = Some(idx);
+                app.diff_text = None;
             }
         }
 
         let y_center = |i: usize| origin.y + i as f32 * ROW_HEIGHT + ROW_HEIGHT / 2.0;
-        let x_lane = |l: usize| origin.x + 8.0 + l as f32 * LANE_WIDTH;
+        let x_lane = |l: usize| origin.x + GRAPH_PAD_LEFT + l as f32 * LANE_WIDTH;
 
-        // Selection highlight
-        if let Some(sel) = app.selected {
-            let top = origin.y + sel as f32 * ROW_HEIGHT;
-            painter.rect_filled(
-                Rect::from_min_size(Pos2::new(rect.min.x, top), Vec2::new(rect.width(), ROW_HEIGHT)),
-                0.0,
-                Color32::from_rgba_unmultiplied(0x31, 0x32, 0x44, 160),
-            );
+        // right-aligned metadata column anchors
+        let x_hash = rect.max.x - GRAPH_PAD_RIGHT;
+        let x_date = x_hash - COL_HASH;
+        let x_author = x_date - COL_DATE;
+        let x_msg_end = x_author - COL_AUTHOR - 12.0;
+
+        // ---- row backgrounds (hover + selection) ----
+        for i in 0..app.rows.len() {
+            let top = origin.y + i as f32 * ROW_HEIGHT;
+            let full = Rect::from_min_size(Pos2::new(rect.min.x, top), Vec2::new(rect.width(), ROW_HEIGHT));
+            if app.selected == Some(i) {
+                painter.rect_filled(full, 0.0, C_SEL);
+            } else if hover_row == Some(i) {
+                painter.rect_filled(full, 0.0, C_HOVER);
+            }
         }
 
+        // ---- graph lanes ----
         for (i, row) in app.rows.iter().enumerate() {
             let yc = y_center(i);
             let yc_next = y_center(i + 1);
 
-            // 1. straight pass-through lanes (unrelated to this commit)
+            // pass-through lanes (unrelated to this commit) drawn straight
             for &l in &row.passthrough {
                 let x = x_lane(l);
                 painter.line_segment(
@@ -443,7 +495,7 @@ fn draw_graph(app: &mut App, ui: &mut egui::Ui) {
                 );
             }
 
-            // 2. connectors to each parent: straight if same lane, curved otherwise
+            // connectors to each parent: straight if same lane, smooth S-curve otherwise
             let x_my = x_lane(row.lane);
             for &pl in &row.parent_lanes {
                 let x_p = x_lane(pl);
@@ -453,11 +505,15 @@ fn draw_graph(app: &mut App, ui: &mut egui::Ui) {
                         Stroke::new(LINE_WIDTH, lane_color(row.lane)),
                     );
                 } else {
-                    let mid_y = (yc + yc_next) / 2.0;
+                    // Vertical control-point offset scales with the horizontal
+                    // distance travelled, so longer lane jumps curve out wider
+                    // and "lazier" — the flowing-ribbon look of Git Graph.
+                    let dx = (x_p - x_my).abs();
+                    let ease = (ROW_HEIGHT * 0.5).max(dx * 0.35).min(ROW_HEIGHT * 0.85);
                     let points = [
                         Pos2::new(x_my, yc),
-                        Pos2::new(x_my, mid_y),
-                        Pos2::new(x_p, mid_y),
+                        Pos2::new(x_my, yc + ease),
+                        Pos2::new(x_p, yc_next - ease),
                         Pos2::new(x_p, yc_next),
                     ];
                     let bez = CubicBezierShape::from_points_stroke(
@@ -469,72 +525,112 @@ fn draw_graph(app: &mut App, ui: &mut egui::Ui) {
                     painter.add(bez);
                 }
             }
+        }
 
-            // 3. node circle
+        // ---- nodes (drawn last so they sit on top of every curve) ----
+        for (i, row) in app.rows.iter().enumerate() {
+            let center = Pos2::new(x_lane(row.lane), y_center(i));
             let node_color = lane_color(row.lane);
-            painter.circle_filled(Pos2::new(x_my, yc), NODE_RADIUS, node_color);
             if row.is_head {
-                painter.circle_stroke(
-                    Pos2::new(x_my, yc),
-                    NODE_RADIUS + 2.0,
-                    Stroke::new(1.4_f32, Color32::WHITE),
-                );
+                painter.circle_filled(center, NODE_RADIUS + 1.5, Color32::from_rgb(0x1e, 0x1e, 0x2e));
+                painter.circle_stroke(center, NODE_RADIUS, Stroke::new(2.2_f32, node_color));
+            } else {
+                painter.circle_filled(center, NODE_RADIUS, node_color);
             }
+        }
 
-            // 4. text: hash, badges, message — to the right of the lane gutter
-            let mut tx = text_col_x + 6.0;
-            let text_y = yc;
+        // ---- text columns ----
+        for (i, row) in app.rows.iter().enumerate() {
+            let yc = y_center(i);
+            let mut tx = text_col_x;
 
-            painter.text(
-                Pos2::new(tx, text_y),
-                egui::Align2::LEFT_CENTER,
-                &row.short,
-                egui::FontId::monospace(11.0),
-                Color32::from_rgb(0xa6, 0xe3, 0xa1),
-            );
-            tx += 54.0;
-
+            // ref pills: HEAD, branches, tags
             if row.is_head {
-                let galley = painter.layout_no_wrap(
-                    "HEAD".into(),
-                    egui::FontId::monospace(10.0),
-                    Color32::from_rgb(0x11, 0x11, 0x1b),
-                );
-                let badge_rect = Rect::from_min_size(
-                    Pos2::new(tx, text_y - 7.0),
-                    Vec2::new(galley.size().x + 6.0, 14.0),
-                );
-                painter.rect_filled(badge_rect, 2.0, Color32::from_rgb(0xa6, 0xe3, 0xa1));
-                painter.galley(badge_rect.min + Vec2::new(3.0, 0.0), galley, Color32::BLACK);
-                tx += badge_rect.width() + 4.0;
+                tx = draw_pill(&painter, tx, yc, "HEAD", C_TEXT, Color32::from_rgb(0xf3, 0x8b, 0xa8));
             }
             for b in &row.branches {
-                tx = draw_badge(&painter, tx, text_y, b, Color32::from_rgb(0x89, 0xdc, 0xeb));
+                tx = draw_pill(&painter, tx, yc, b, C_TEXT, Color32::from_rgb(0x89, 0xb4, 0xfa));
             }
             for t in &row.tags {
-                tx = draw_badge(&painter, tx, text_y, t, Color32::from_rgb(0xfa, 0xb3, 0x87));
+                tx = draw_pill(&painter, tx, yc, t, Color32::from_rgb(0x1e, 0x1e, 0x2e), Color32::from_rgb(0xfa, 0xb3, 0x87));
             }
 
+            // commit message (truncated to fit before the metadata columns)
+            let msg = elide(&painter, &row.summary, egui::FontId::proportional(12.5), x_msg_end - tx);
             painter.text(
-                Pos2::new(tx, text_y),
+                Pos2::new(tx, yc),
                 egui::Align2::LEFT_CENTER,
-                &row.summary,
-                egui::FontId::proportional(12.0),
-                Color32::from_rgb(0xcd, 0xd6, 0xf4),
+                &msg,
+                egui::FontId::proportional(12.5),
+                C_TEXT,
+            );
+
+            // author (right block, left-aligned within its column)
+            let author = elide(&painter, &row.author, egui::FontId::proportional(11.5), COL_AUTHOR - 8.0);
+            painter.text(
+                Pos2::new(x_author, yc),
+                egui::Align2::LEFT_CENTER,
+                &author,
+                egui::FontId::proportional(11.5),
+                C_SUBTEXT,
+            );
+
+            // date
+            painter.text(
+                Pos2::new(x_date, yc),
+                egui::Align2::LEFT_CENTER,
+                format_time(row.time, row.offset_min),
+                egui::FontId::proportional(11.5),
+                C_SUBTEXT,
+            );
+
+            // short hash (right aligned)
+            painter.text(
+                Pos2::new(x_hash, yc),
+                egui::Align2::RIGHT_CENTER,
+                &row.short,
+                egui::FontId::monospace(11.0),
+                C_HASH,
             );
         }
 
-        // draw a faint frame around the whole content so long scroll areas read clearly
-        let _ = PathShape::convex_polygon(vec![], Color32::TRANSPARENT, Stroke::NONE); // no-op keeps import used
+        let _ = PathShape::convex_polygon(vec![], Color32::TRANSPARENT, Stroke::NONE); // keep import used
     });
 }
 
-fn draw_badge(painter: &egui::Painter, x: f32, y: f32, label: &str, color: Color32) -> f32 {
-    let galley = painter.layout_no_wrap(label.to_string(), egui::FontId::monospace(10.0), Color32::BLACK);
-    let rect = Rect::from_min_size(Pos2::new(x, y - 7.0), Vec2::new(galley.size().x + 6.0, 14.0));
-    painter.rect_filled(rect, 2.0, color);
-    painter.galley(rect.min + Vec2::new(3.0, 0.0), galley, Color32::BLACK);
-    rect.max.x + 4.0
+/// A rounded ref pill. Returns the x position just after the pill.
+fn draw_pill(painter: &egui::Painter, x: f32, y: f32, label: &str, fg: Color32, bg: Color32) -> f32 {
+    let font = egui::FontId::proportional(10.5);
+    let galley = painter.layout_no_wrap(label.to_string(), font, fg);
+    let w = galley.size().x + 12.0;
+    let h = 16.0;
+    let rect = Rect::from_min_size(Pos2::new(x, y - h / 2.0), Vec2::new(w, h));
+    painter.rect_filled(rect, 8.0, bg);
+    painter.galley(rect.min + Vec2::new(6.0, (h - galley.size().y) / 2.0), galley, fg);
+    rect.max.x + 5.0
+}
+
+/// Truncate `text` with an ellipsis so it fits within `max_w` pixels.
+fn elide(painter: &egui::Painter, text: &str, font: egui::FontId, max_w: f32) -> String {
+    if max_w <= 0.0 {
+        return String::new();
+    }
+    let full = painter.layout_no_wrap(text.to_string(), font.clone(), Color32::WHITE);
+    if full.size().x <= max_w {
+        return text.to_string();
+    }
+    let mut end = text.len();
+    while end > 0 {
+        if text.is_char_boundary(end) {
+            let candidate = format!("{}…", &text[..end]);
+            let g = painter.layout_no_wrap(candidate.clone(), font.clone(), Color32::WHITE);
+            if g.size().x <= max_w {
+                return candidate;
+            }
+        }
+        end -= 1;
+    }
+    String::from("…")
 }
 
 fn print_help() {
