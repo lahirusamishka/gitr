@@ -333,12 +333,9 @@ fn draw_details(app: &mut App, ui: &mut egui::Ui) {
                             Color32::TRANSPARENT,
                         ),
                     };
-                    if bg != Color32::TRANSPARENT {
-                        job.append(&" ".repeat(line.len()), 0.0, egui::TextFormat::simple(font.clone(), bg));
-                        job.append("\n", 0.0, egui::TextFormat::simple(font.clone(), Color32::TRANSPARENT));
-                    } else {
-                        job.append(&format!("{}\n", line), 0.0, egui::TextFormat::simple(font.clone(), fg));
-                    }
+                    let mut fmt = egui::TextFormat::simple(font.clone(), fg);
+                    fmt.background = bg;
+                    job.append(&format!("{}\n", line), 0.0, fmt);
                 }
                 ui.fonts(|f| f.layout_job(job))
             };
