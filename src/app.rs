@@ -1,8 +1,10 @@
 use std::process::Command;
+use std::sync::Arc;
 
 use eframe::egui;
 use egui::{
     epaint::{CubicBezierShape, PathShape},
+    text::LayoutJob,
     Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2,
 };
 use git2::Repository;
@@ -24,6 +26,7 @@ pub struct App {
     pub changed_files: Vec<String>,
     pub selected_file: Option<String>,
     pub file_diff: Option<String>,
+    pub side_by_side: bool,
 }
 
 impl App {
@@ -41,6 +44,7 @@ impl App {
             changed_files: Vec::new(),
             selected_file: None,
             file_diff: None,
+            side_by_side: false,
         };
         app.reload();
         app
@@ -281,14 +285,73 @@ fn draw_details(app: &mut App, ui: &mut egui::Ui) {
             ui.label(format!("tags: {}", tags.join(", ")));
         }
         ui.add_space(8.0);
-        if let Some(file_diff) = &app.file_diff {
-            if let Some(file) = &app.selected_file {
-                ui.label(egui::RichText::new(file).strong().size(12.0).color(Color32::from_rgb(0x89, 0xb4, 0xfa)));
+        ui.horizontal(|ui| {
+            let btn = if app.side_by_side { "Text view" } else { "Side-by-side" };
+            if ui.button(btn).clicked() {
+                app.side_by_side = !app.side_by_side;
             }
-            ui.add_space(2.0);
-            diff::draw_diff(ui, file_diff);
+        });
+        let (label, text): (Option<String>, &str) = if let Some(file_diff) = &app.file_diff {
+            (app.selected_file.clone(), file_diff.as_str())
         } else if let Some(diff) = &app.diff_text {
-            diff::draw_diff(ui, diff);
+            (None, diff.as_str())
+        } else {
+            (None, "")
+        };
+        if let Some(file) = &label {
+            ui.label(egui::RichText::new(file).strong().size(12.0).color(Color32::from_rgb(0x89, 0xb4, 0xfa)));
+            ui.add_space(2.0);
+        }
+        if app.side_by_side {
+            diff::draw_diff(ui, text);
+        } else {
+            let display_layout = text.to_owned();
+            let font = FontId::monospace(13.0);
+            let mut layouter = move |ui: &egui::Ui, _: &str, _: f32| -> Arc<egui::Galley> {
+                let mut job = LayoutJob::default();
+                for line in display_layout.lines() {
+                    if line.is_empty() {
+                        job.append("\n", 0.0, egui::TextFormat::simple(font.clone(), Color32::TRANSPARENT));
+                        continue;
+                    }
+                    let ch = line.chars().next().unwrap_or(' ');
+                    let (fg, bg) = match ch {
+                        '+' => (
+                            Color32::from_rgb(0xa6, 0xe3, 0xa1),
+                            Color32::from_rgba_unmultiplied(0x1a, 0x3c, 0x1a, 180),
+                        ),
+                        '-' => (
+                            Color32::from_rgb(0xf3, 0x8b, 0xa8),
+                            Color32::from_rgba_unmultiplied(0x3c, 0x1a, 0x1a, 180),
+                        ),
+                        '@' => (
+                            Color32::from_rgb(0x89, 0xb4, 0xfa),
+                            Color32::TRANSPARENT,
+                        ),
+                        _ => (
+                            Color32::from_rgb(0xba, 0xbe, 0xcc),
+                            Color32::TRANSPARENT,
+                        ),
+                    };
+                    if bg != Color32::TRANSPARENT {
+                        job.append(&" ".repeat(line.len()), 0.0, egui::TextFormat::simple(font.clone(), bg));
+                        job.append("\n", 0.0, egui::TextFormat::simple(font.clone(), Color32::TRANSPARENT));
+                    } else {
+                        job.append(&format!("{}\n", line), 0.0, egui::TextFormat::simple(font.clone(), fg));
+                    }
+                }
+                ui.fonts(|f| f.layout_job(job))
+            };
+
+            let mut display = text.to_owned();
+            egui::Frame::none().fill(Color32::from_rgb(0x1e, 0x1e, 0x2e)).show(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::multiline(&mut display)
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width(f32::INFINITY)
+                        .layouter(&mut layouter),
+                );
+            });
         }
     });
 }
