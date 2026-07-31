@@ -48,6 +48,10 @@ impl App {
                         config::GRAPH_PAD_LEFT + commit::max_lanes(&rows) as f32 * config::LANE_WIDTH + config::GRAPH_PAD_RIGHT;
                     self.rows = rows;
                     self.selected = if self.rows.is_empty() { None } else { Some(0) };
+                    self.diff_text = None;
+                    if self.selected.is_some() {
+                        self.load_diff(false);
+                    }
                     self.error = None;
                 }
                 Err(e) => self.error = Some(format!("failed to read commits: {e}")),
@@ -56,17 +60,17 @@ impl App {
         }
     }
 
-    fn load_diff(&mut self, full: bool) {
+    fn load_diff(&mut self, stat_only: bool) {
         if let Some(i) = self.selected {
             let hash = self.rows[i].oid.to_string();
-            let mut args = vec!["show"];
-            if !full {
-                args.push("--stat");
-            }
-            args.push(&hash);
+            let args: &[&str] = if stat_only {
+                &["diff-tree", "--no-commit-id", "-r", "--stat", &hash]
+            } else {
+                &["show", &hash]
+            };
             let out = Command::new("git")
                 .current_dir(&self.repo_path)
-                .args(&args)
+                .args(args)
                 .output();
             self.diff_text = match out {
                 Ok(o) => Some(String::from_utf8_lossy(&o.stdout).to_string()),
@@ -98,12 +102,27 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Ctrl+Q / Cmd+Q to quit
+        if ctx.input(|i| i.key_pressed(egui::Key::Q) && i.modifiers.ctrl) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("gitr — ").strong().color(Color32::from_rgb(0x89, 0xb4, 0xfa)));
                 ui.label(egui::RichText::new(&self.repo_path).strong());
-                ui.separator();
-                if ui.button("Refresh").clicked() {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("☕ Buy me a coffee").clicked() {
+                        let _ = webbrowser::open("https://buymeacoffee.com/lahirusamishka");
+                    }
+                    ui.separator();
+                    ui.label(format!("{} commits", self.rows.len()));
+                });
+            });
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                if ui.button("⟳ Refresh").clicked() {
                     self.reload();
                 }
                 ui.separator();
@@ -122,11 +141,11 @@ impl eframe::App for App {
                 if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     self.find_next();
                 }
-                if ui.button("Find next").clicked() {
+                if ui.button("Find").clicked() {
                     self.find_next();
                 }
                 ui.separator();
-                ui.label(format!("{} commits", self.rows.len()));
+                ui.label("Ctrl+Q to exit");
             });
             ui.add_space(4.0);
         });
@@ -184,18 +203,6 @@ fn draw_details(app: &mut App, ui: &mut egui::Ui) {
             ui.label(format!("tags: {}", tags.join(", ")));
         }
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            if ui.button("Full diff").clicked() {
-                app.load_diff(true);
-            }
-            if ui.button("Stat only").clicked() {
-                app.load_diff(false);
-            }
-            if ui.button("Clear").clicked() {
-                app.diff_text = None;
-            }
-        });
-        ui.separator();
         if let Some(diff) = &app.diff_text {
             diff::draw_diff(ui, diff);
         }
@@ -221,6 +228,7 @@ fn draw_graph(app: &mut App, ui: &mut egui::Ui) {
             if let Some(idx) = hover_row {
                 app.selected = Some(idx);
                 app.diff_text = None;
+                app.load_diff(false);
             }
         }
 
@@ -298,10 +306,10 @@ fn draw_graph(app: &mut App, ui: &mut egui::Ui) {
             let mut tx = text_col_x;
 
             if row.is_head {
-                tx = draw_pill(&painter, tx, yc, "HEAD", config::C_TEXT, Color32::from_rgb(0xf3, 0x8b, 0xa8));
+                tx = draw_pill(&painter, tx, yc, "HEAD", Color32::from_rgb(0x1e, 0x1e, 0x2e), Color32::from_rgb(0xf3, 0x8b, 0xa8));
             }
             for b in &row.branches {
-                tx = draw_pill(&painter, tx, yc, b, config::C_TEXT, Color32::from_rgb(0x89, 0xb4, 0xfa));
+                tx = draw_pill(&painter, tx, yc, b, Color32::from_rgb(0x1e, 0x1e, 0x2e), Color32::from_rgb(0x89, 0xb4, 0xfa));
             }
             for t in &row.tags {
                 tx = draw_pill(&painter, tx, yc, t, Color32::from_rgb(0x1e, 0x1e, 0x2e), Color32::from_rgb(0xfa, 0xb3, 0x87));
@@ -327,7 +335,7 @@ fn draw_graph(app: &mut App, ui: &mut egui::Ui) {
 
             painter.text(
                 Pos2::new(x_date, yc),
-                egui::Align2::LEFT_CENTER,
+                egui::Align2::RIGHT_CENTER,
                 commit::format_time(row.time, row.offset_min),
                 FontId::proportional(11.5),
                 config::C_SUBTEXT,

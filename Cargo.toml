@@ -1,13 +1,17 @@
 [package]
-name = "rgitk-gui"
+name = "gitr"
 version = "0.1.0"
 edition = "2021"
+description = "A compact git commit graph viewer — alternative to gitk, inspired by VS Code Git Graph"
+repository = "https://github.com/samishka/gitr"
+license = "MIT"
 
 [dependencies]
 eframe = "0.28"
 egui = "0.28"
 git2 = { version = "0.19", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+webbrowser = "1.0"
 
 [profile.release]
 opt-level = 3

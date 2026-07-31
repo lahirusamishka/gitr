@@ -4,14 +4,20 @@ mod config;
 mod diff;
 
 fn print_help() {
-    println!("rgitk-gui — git commit graph viewer with smooth curved lanes\n");
+    println!("gitr — a compact git commit graph viewer\n");
+    println!("Alternative to gitk, inspired by VS Code Git Graph.");
+    println!("Run from any git repository root.\n");
     println!("USAGE:");
-    println!("  rgitk-gui [path] [--limit N] [--current] [--help]\n");
+    println!("  gitr [path] [--limit N] [--current] [--help]\n");
     println!("OPTIONS:");
     println!("  path        repository path (default: current directory)");
     println!("  --limit N   max commits to load (default: 1000)");
     println!("  --current   only walk the current branch (default: all refs)");
-    println!("  --help      show this message");
+    println!("  --help      show this message\n");
+    println!("CONTROLS:");
+    println!("  Ctrl+Q      exit");
+    println!("  Click row   select commit & show diff");
+    println!("  Search      find commits by message, author, or hash");
 }
 
 fn main() -> eframe::Result<()> {
@@ -45,7 +51,7 @@ fn main() -> eframe::Result<()> {
     };
 
     eframe::run_native(
-        "rgitk-gui",
+        "gitr",
         options,
         Box::new(move |_cc| Ok(Box::new(app::App::new(path, limit, all_refs)))),
     )
