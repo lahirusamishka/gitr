@@ -332,7 +332,7 @@ fn draw_details(app: &mut App, ui: &mut egui::Ui) {
                 job.append(&format!("{}\n", line), 0.0, fmt);
             }
 
-            egui::Frame::none().fill(Color32::from_rgb(0x1e, 0x1e, 0x2e)).show(ui, |ui| {
+            egui::Frame::none().show(ui, |ui| {
                 egui::ScrollArea::horizontal().auto_shrink([false, false]).show(ui, |ui| {
                     ui.add(egui::Label::new(job.clone()));
                 });
