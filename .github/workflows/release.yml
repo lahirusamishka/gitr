@@ -4,6 +4,7 @@
 # Usage:
 #   git tag v0.1.0 && git push origin v0.1.0
 #
+#
 # No extra setup needed — GITHUB_TOKEN is provided automatically.
 
 name: release
