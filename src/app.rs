@@ -714,7 +714,6 @@ impl eframe::App for App {
                 let exe = std::env::var("APPIMAGE").ok()
                     .or_else(|| std::env::current_exe().ok().map(|p| p.to_string_lossy().to_string()))
                     .unwrap_or_default();
-                let is_appimage = std::env::var("APPIMAGE").is_ok();
                 egui::Window::new("Update Ready")
                     .collapsible(false)
                     .resizable(false)
@@ -728,17 +727,22 @@ impl eframe::App for App {
                         }
                         if ui.button("Replace & Restart").clicked() {
                             let replaced = if file_size == 0 { false } else {
-                                // Use `cp` via Command (matches what works in the terminal)
-                                let status = std::process::Command::new("cp")
-                                    .args(&[&p, &exe])
+                                // Remove old file first to avoid "Text file busy"
+                                let _ = std::process::Command::new("rm")
+                                    .args(&["-f", &exe])
                                     .status();
-                                let copied = status.map(|s| s.success()).unwrap_or(false);
-                                if copied {
+                                // Then copy new file into place
+                                let ok = std::process::Command::new("cp")
+                                    .args(&[&p, &exe])
+                                    .status()
+                                    .map(|s| s.success())
+                                    .unwrap_or(false);
+                                if ok {
                                     let _ = std::process::Command::new("chmod")
                                         .args(&["+x", &exe])
                                         .status();
                                 }
-                                copied
+                                ok
                             };
                             if replaced {
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
