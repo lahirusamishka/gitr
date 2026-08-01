@@ -522,7 +522,7 @@ impl eframe::App for App {
             .show(ctx, |ui| {
                 ui.label(egui::RichText::new("gitr").strong().size(18.0).color(Color32::from_rgb(0x89, 0xb4, 0xfa)));
                 ui.add_space(2.0);
-                ui.label("Version 0.1.0");
+                ui.label(egui::RichText::new(format!("Version {}", config::VERSION)).size(12.0).color(config::C_SUBTEXT));
                 ui.separator();
                 ui.add_space(4.0);
                 ui.label("Inspired by gitg (GNOME Git graphical interface) and gitk.");
@@ -726,14 +726,29 @@ impl eframe::App for App {
                         }
                         if ui.button("Replace & Restart").clicked() {
                             let replaced = if file_size == 0 { false } else {
-                                // Use copy always (rename fails across filesystems e.g. /tmp -> /usr)
                                 let backup = format!("{exe}.bak");
                                 let _ = std::fs::copy(&exe, &backup);
-                                let result = std::fs::copy(&p, &exe);
-                                if result.is_ok() {
+                                if is_appimage {
+                                    let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755));
+                                }
+                                // Try direct copy first
+                                let mut ok = std::fs::copy(&p, &exe).is_ok();
+                                // Try pkexec (GUI privilege escalation) if direct fails
+                                if !ok {
+                                    ok = std::process::Command::new("pkexec")
+                                        .args(&["cp", &p, &exe])
+                                        .status().map(|s| s.success()).unwrap_or(false);
+                                }
+                                // Try sudo as fallback
+                                if !ok {
+                                    ok = std::process::Command::new("sudo")
+                                        .args(&["cp", &p, &exe])
+                                        .status().map(|s| s.success()).unwrap_or(false);
+                                }
+                                if ok {
                                     let _ = std::fs::remove_file(&backup);
                                 }
-                                result.is_ok()
+                                ok
                             };
                             if replaced {
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -745,11 +760,8 @@ impl eframe::App for App {
                         if install_failed {
                             ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), "Could not replace the binary.");
                             ui.add_space(2.0);
-                            ui.label("Run this in your terminal:");
+                            ui.label("Try running this in your terminal:");
                             ui.monospace(format!("sudo cp {p} {exe}"));
-                            if is_appimage {
-                                let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755));
-                            }
                         }
                         if ui.button("Cancel").clicked() {
                             let _ = std::fs::remove_file(&p);
