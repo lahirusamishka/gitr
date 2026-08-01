@@ -72,11 +72,38 @@ jobs:
           Terminal=false
           EOF
 
-          # If you added packaging/gitr.png, this copies it in.
-          # Otherwise linuxdeploy falls back to a placeholder icon.
-          if [ -f packaging/${BIN_NAME}.png ]; then
-            cp packaging/${BIN_NAME}.png AppDir/usr/share/icons/hicolor/256x256/apps/${BIN_NAME}.png
-          fi
+          # Generate placeholder icons so linuxdeploy doesn't fail.
+          mkdir -p AppDir/usr/share/icons/hicolor/{256x256,48x48,scalable}/apps
+          python3 -c "
+import struct, zlib
+def make_png(w, h, r, g, b):
+    raw = b''
+    for y in range(h):
+        raw += b'\x00' + bytes([r, g, b] * w)
+    c = zlib.compress(raw)
+    def chunk(t, d):
+        return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+    return (b'\x89PNG\r\n\x1a\n' +
+        chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) +
+        chunk(b'IDAT', c) +
+        chunk(b'IEND', b''))
+for size, name in [('256x256', 256), ('48x48', 48)]:
+    with open(f'AppDir/usr/share/icons/hicolor/{size}/apps/${BIN_NAME}.png', 'wb') as f:
+        f.write(make_png(name, name, 137, 180, 250))
+"
+          # linuxdeploy may look for an SVG in scalable
+          ln -sf ../256x256/apps/${BIN_NAME}.png AppDir/usr/share/icons/hicolor/scalable/apps/${BIN_NAME}.png
+          # Create the hicolor icon theme index
+          cat > AppDir/usr/share/icons/hicolor/index.theme <<THEME
+[Icon Theme]
+Name=Hicolor
+Comment=Fallback icon theme
+Directories=48x48/apps;256x256/apps
+[48x48/apps]
+Size=48
+[256x256/apps]
+Size=256
+THEME
 
           ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
