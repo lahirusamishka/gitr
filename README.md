@@ -1,4 +1,4 @@
-# gitr — a compact git commit graph viewer
+# gitr - a compact git commit graph viewer
 
 Alternative to **gitk**, inspired by **VS Code Git Graph**.  
 Runs from any git repo. Type `gr` and see your commit graph.

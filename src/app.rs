@@ -455,7 +455,7 @@ impl eframe::App for App {
                 ui.add_space(4.0);
                 ui.label("Inspired by gitg (GNOME Git graphical interface) and gitk.");
                 ui.add_space(4.0);
-                ui.label("I love the git graph tree view and gitk is very easy to access in the terminal. I wanted both combined into one tool — so I built it with Rust.");
+                ui.label("I love the git graph tree view and gitk is very easy to access in the terminal. I wanted both combined into one tool - so I built it with Rust.");
                 ui.add_space(4.0);
                 ui.label("gitr (r = Rust) brings together the visual tree of gitg and the quick accessibility of gitk, making it easy to browse your repository and check file diffs at a glance.");
                 ui.add_space(4.0);
@@ -561,6 +561,113 @@ impl eframe::App for App {
                 });
             }
         });
+
+        if self.show_rename {
+            let old = self.rename_old.clone();
+            let repo_path = self.repo_path.clone();
+            let mut close = false;
+            egui::Window::new("Rename branch")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(format!("Rename \"{old}\" to:"));
+                    ui.text_edit_singleline(&mut self.rename_new);
+                    ui.horizontal(|ui| {
+                        if ui.button("Rename").clicked() {
+                            let _ = std::process::Command::new("git")
+                                .current_dir(&repo_path)
+                                .args(&["branch", "-m", &old, &self.rename_new])
+                                .output();
+                            self.reload();
+                            close = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+            if close {
+                self.show_rename = false;
+            }
+        }
+
+        if let Some(branch) = &self.confirm_delete.clone() {
+            let del_branch = branch.clone();
+            let repo_path = self.repo_path.clone();
+            let mut del_origin = false;
+            let mut close = false;
+            egui::Window::new("Delete branch")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(format!("Delete \"{del_branch}\"?"));
+                    ui.add_space(4.0);
+                    ui.checkbox(&mut del_origin, "also delete from origin");
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Yes").clicked() {
+                            let _ = std::process::Command::new("git").current_dir(&repo_path).args(&["branch", "-d", &del_branch]).output();
+                            if del_origin {
+                                let _ = std::process::Command::new("git").current_dir(&repo_path).args(&["push", "origin", "--delete", &del_branch]).output();
+                            }
+                            self.reload();
+                            close = true;
+                        }
+                        if ui.button("No").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+            if close {
+                self.confirm_delete = None;
+            }
+        }
+
+        if let Some(branch) = &self.confirm_checkout.clone() {
+            let target = branch.clone();
+            let repo_path = self.repo_path.clone();
+            let has_staged = !self.staged_files.is_empty();
+            let has_unstaged = !self.unstaged_files.is_empty();
+            let has_changes = has_staged || has_unstaged;
+            let mut close = false;
+            egui::Window::new("Switch branch")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(egui::RichText::new(format!("Switch to \"{target}\"?")).strong().size(14.0));
+                    ui.add_space(6.0);
+                    if has_changes {
+                        ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), "You have uncommitted changes.");
+                        ui.label("These will be stashed before switching.");
+                        ui.add_space(6.0);
+                    }
+                    ui.horizontal(|ui| {
+                        if has_changes {
+                            if ui.button("Stash & Checkout").clicked() {
+                                let _ = std::process::Command::new("git").current_dir(&repo_path).args(&["stash"]).output();
+                                let _ = std::process::Command::new("git").current_dir(&repo_path).args(&["checkout", &target]).output();
+                                self.reload();
+                                close = true;
+                            }
+                        } else {
+                            if ui.button("Checkout").clicked() {
+                                let _ = std::process::Command::new("git").current_dir(&repo_path).args(&["checkout", &target]).output();
+                                self.reload();
+                                close = true;
+                            }
+                        }
+                        if ui.button("Cancel").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+            if close {
+                self.confirm_checkout = None;
+            }
+        }
     }
 }
 
@@ -837,9 +944,13 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
             for b in &row.branches {
                 if tx >= cap_x { break; }
                 let is_current = b == &app.current_branch;
+<<<<<<< Updated upstream
                 let bg = if row.is_stash {
                     Color32::from_rgb(0xcb, 0xa6, 0xf7)
                 } else if is_current { Color32::from_rgb(0xa6, 0xe3, 0xa1) } else { Color32::from_rgb(0x89, 0xb4, 0xfa) };
+=======
+                let bg = if is_current { Color32::from_rgb(0xa6, 0xe3, 0xa1) } else { Color32::from_rgb(0x89, 0xb4, 0xfa) };
+>>>>>>> Stashed changes
                 let pill_start = tx;
                 tx = draw_pill(&painter, tx, yc, b, Color32::from_rgb(0x1e, 0x1e, 0x2e), bg);
                 if let Some(pos) = response.hover_pos() {
