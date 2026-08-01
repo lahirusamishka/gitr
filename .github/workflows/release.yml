@@ -1,6 +1,4 @@
-# Builds gitr for Linux and publishes:
-#   - on master push → rolling "latest" release
-#   - on version tag (v*) → versioned release (e.g. v0.1.0)
+# Builds gitr for Linux when a version tag (v*) is pushed.
 # Artifacts: AppImage + plain binary tarball
 #
 # Usage:
@@ -12,7 +10,6 @@ name: release
 
 on:
   push:
-    branches: [master]
     tags: [v*]
   workflow_dispatch: {}
 
@@ -112,15 +109,12 @@ jobs:
         env:
           ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
         with:
-          # On tag push: use the tag as version; on master push: keep rolling "latest"
           tag_name: ${{ github.ref_name }}
-          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'Latest build' }}
+          name: ${{ github.ref_name }}
           make_latest: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
-            ${{ startsWith(github.ref, 'refs/tags/') && format('## gitr {0}', github.ref_name) || 'Automated build from the latest `master` commit.' }}
-
-            ${{ startsWith(github.ref, 'refs/tags/') && format('See the [changelog](https://github.com/lahirusamishka/gitr/compare/{0}...{1}) for details.', github.event.before || github.sha, github.sha) || '' }}
+            ## gitr ${{ github.ref_name }}
 
             ### Assets
             - `gitr-x86_64.AppImage` — portable, just run it
