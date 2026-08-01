@@ -728,40 +728,38 @@ impl eframe::App for App {
                             ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), "Downloaded file is empty or missing.");
                         }
                         if ui.button("Replace & Restart").clicked() {
+                            let mut err_msg = String::new();
                             let replaced = if file_size == 0 { false } else {
-                                let backup = format!("{exe}.bak");
-                                let _ = std::fs::copy(&exe, &backup);
                                 if is_appimage {
                                     let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755));
                                 }
-                                // Try direct copy first
-                                let mut ok = std::fs::copy(&p, &exe).is_ok();
-                                // Try pkexec (GUI privilege escalation) if direct fails
-                                if !ok {
-                                    ok = std::process::Command::new("pkexec")
-                                        .args(&["cp", &p, &exe])
-                                        .status().map(|s| s.success()).unwrap_or(false);
+                                // Remove old file first, then copy (handles permission/resource conflicts)
+                                let _ = std::fs::remove_file(&exe);
+                                match std::fs::copy(&p, &exe) {
+                                    Ok(_) => true,
+                                    Err(e) => {
+                                        err_msg = format!("{e}");
+                                        false
+                                    }
                                 }
-                                if ok {
-                                    let _ = std::fs::remove_file(&backup);
-                                }
-                                ok
                             };
                             if replaced {
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                 close = true;
                             } else {
                                 self.replace_failed = true;
+                                if !err_msg.is_empty() {
+                                    ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), &err_msg);
+                                }
                             }
                         }
                         if self.replace_failed {
                             ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), "Could not replace the binary.");
                             ui.add_space(2.0);
                             ui.label("Run this in your terminal:");
-                            ui.monospace(format!("cp {p} {exe}"));
+                            ui.monospace(format!("cp {p} {exe} && chmod +x {exe}"));
                             ui.add_space(2.0);
-                            ui.label("Then make it executable:");
-                            ui.monospace(format!("chmod +x {exe}"));
+                            ui.label("Then restart gitr manually.");
                         }
                         if ui.button("Cancel").clicked() {
                             let _ = std::fs::remove_file(&p);
