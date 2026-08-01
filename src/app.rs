@@ -1325,7 +1325,7 @@ fn check_update(repo: &str, current: &str) -> UpdateState {
                 Ok(v) => v,
                 Err(_) => return UpdateState::Failed("Invalid response".into()),
             };
-            let tag = json["tag_name"].as_str().unwrap_or("").trim_start_matches('v');
+            let raw_tag = json["tag_name"].as_str().unwrap_or("");
             let notes = json["body"].as_str().unwrap_or("").to_string();
             let assets = json["assets"].as_array().map(|a| {
                 a.iter().filter_map(|a| {
@@ -1334,19 +1334,23 @@ fn check_update(repo: &str, current: &str) -> UpdateState {
                     Some((name.to_string(), browser.to_string()))
                 }).collect::<Vec<_>>()
             }).unwrap_or_default();
-            if tag.is_empty() {
+            if raw_tag.is_empty() {
                 return UpdateState::Failed("No releases found".into());
             }
-            // Simple version compare (e.g., "0.1.0" vs "0.2.0")
-            if tag == current {
-                return UpdateState::UpToDate;
+            // Only compare version tags (starting with "v"), skip "latest" / rolling tags
+            if let Some(ver) = raw_tag.strip_prefix('v') {
+                if ver == current {
+                    return UpdateState::UpToDate;
+                }
+                // Find AppImage or binary URL
+                let url = assets.iter().find(|(n, _)| n.contains("x86_64.AppImage"))
+                    .or_else(|| assets.iter().find(|(n, _)| n.contains("linux-x86_64.tar.gz")))
+                    .map(|(_, u)| u.clone())
+                    .unwrap_or_else(|| format!("https://github.com/{repo}/releases/tag/{raw_tag}"));
+                return UpdateState::Available { version: ver.to_string(), url, notes };
             }
-            // Find AppImage or binary URL
-            let url = assets.iter().find(|(n, _)| n.contains("x86_64.AppImage"))
-                .or_else(|| assets.iter().find(|(n, _)| n.contains("linux-x86_64.tar.gz")))
-                .map(|(_, u)| u.clone())
-                .unwrap_or_else(|| format!("https://github.com/{repo}/releases/tag/v{tag}"));
-            UpdateState::Available { version: tag.to_string(), url, notes }
+            // Non-version tag (e.g. "latest") — assume we're up to date
+            UpdateState::UpToDate
         }
         Err(e) => UpdateState::Failed(format!("Network error: {e}")),
     }
