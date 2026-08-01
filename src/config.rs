@@ -26,6 +26,9 @@ pub const C_HASH: Color32 = Color32::from_rgb(0xf9, 0xe2, 0xaf);
 pub const C_SEL: Color32 = Color32::from_rgba_premultiplied(0x31, 0x32, 0x44, 200);
 pub const C_HOVER: Color32 = Color32::from_rgba_premultiplied(0x28, 0x28, 0x38, 120);
 
+pub const VERSION: &str = "0.1.0";
+pub const REPO: &str = "lahirusamishka/gitr";
+
 pub fn lane_color(lane: usize) -> Color32 {
     LANE_COLORS[lane % LANE_COLORS.len()]
 }

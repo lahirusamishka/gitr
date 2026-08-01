@@ -1,3 +1,4 @@
+use std::io::{Read, Write};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -13,6 +14,16 @@ use git2::Repository;
 use crate::commit::{self, CommitRow};
 use crate::config;
 use crate::diff;
+
+pub enum UpdateState {
+    Idle,
+    Checking,
+    Available { version: String, url: String, notes: String },
+    Downloading { downloaded: u64, total: u64 },
+    Ready { path: String },
+    Failed(String),
+    UpToDate,
+}
 
 pub struct App {
     pub repo_path: String,
@@ -46,6 +57,8 @@ pub struct App {
     pub confirm_delete: Option<String>,
     pub del_origin: bool,
     pub confirm_checkout: Option<String>,
+    pub update_state: UpdateState,
+    pub pending_update: Arc<std::sync::Mutex<Option<UpdateState>>>,
 }
 
 impl App {
@@ -143,6 +156,8 @@ impl App {
             confirm_delete: None,
             del_origin: false,
             confirm_checkout: None,
+            update_state: UpdateState::Idle,
+            pending_update: Arc::new(std::sync::Mutex::new(None)),
         };
         app
     }
@@ -369,6 +384,9 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(state) = self.pending_update.lock().unwrap().take() {
+            self.update_state = state;
+        }
         if self.initial_load {
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.add_space(40.0);
@@ -422,6 +440,16 @@ impl eframe::App for App {
                     }
                 });
                 ui.menu_button("Help", |ui| {
+                    if ui.button("Check for Updates").clicked() {
+                        self.update_state = UpdateState::Checking;
+                        let repo = config::REPO.to_string();
+                        let current = config::VERSION.to_string();
+                        let pending = self.pending_update.clone();
+                        std::thread::spawn(move || {
+                            let result = check_update(&repo, &current);
+                            *pending.lock().unwrap() = Some(result);
+                        });
+                    }
                     if ui.button("About gitr").clicked() {
                         self.show_about = true;
                     }
@@ -602,6 +630,155 @@ impl eframe::App for App {
                 });
             }
         });
+
+        match &self.update_state {
+            UpdateState::Checking => {
+                egui::Window::new("Update")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.add(egui::Spinner::new());
+                            ui.label("Checking for updates…");
+                        });
+                    });
+            }
+            UpdateState::Available { version, url, notes } => {
+                let v = version.clone();
+                let u = url.clone();
+                let n = notes.clone();
+                let mut close = false;
+                egui::Window::new("Update Available")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(egui::RichText::new(format!("gitr v{v}")).strong().size(16.0).color(Color32::from_rgb(0xa6, 0xe3, 0xa1)));
+                        ui.add_space(4.0);
+                        if !n.is_empty() {
+                            ui.add(egui::Label::new(&n).wrap());
+                            ui.add_space(4.0);
+                        }
+                        ui.horizontal(|ui| {
+                            if ui.button("Download & Install").clicked() {
+                                let pending = self.pending_update.clone();
+                                let dl_url = u.clone();
+                                let exe = std::env::current_exe().ok().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+                                let is_appimage = exe.contains(".AppImage");
+                                let dest = if is_appimage { exe } else { format!("{exe}.new") };
+                                let dl = Arc::new(std::sync::Mutex::new(0u64));
+                                let dt = Arc::new(std::sync::Mutex::new(0u64));
+                                let dl2 = dl.clone();
+                                let dt2 = dt.clone();
+                                let d = dest.clone();
+                                std::thread::spawn(move || {
+                                    match download_update(&dl_url, &d, &dl2, &dt2) {
+                                        Ok(()) => {
+                                            *pending.lock().unwrap() = Some(UpdateState::Ready { path: d });
+                                        }
+                                        Err(e) => {
+                                            *pending.lock().unwrap() = Some(UpdateState::Failed(e));
+                                        }
+                                    }
+                                });
+                                self.update_state = UpdateState::Downloading { downloaded: 0, total: 0 };
+                                close = true;
+                            }
+                            if ui.button("Later").clicked() {
+                                self.update_state = UpdateState::Idle;
+                            }
+                        });
+                    });
+                if close { self.update_state = UpdateState::Idle; }
+            }
+            UpdateState::Downloading { downloaded, total } => {
+                let d = *downloaded;
+                let t = *total;
+                egui::Window::new("Downloading")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        let pct = if t > 0 { d as f64 / t as f64 } else { 0.0 };
+                        let mb_d = d as f64 / 1_048_576.0;
+                        let mb_t = t as f64 / 1_048_576.0;
+                        ui.add(egui::ProgressBar::new(pct as f32).text(format!("{mb_d:.1} MB / {mb_t:.1} MB")));
+                        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                    });
+            }
+            UpdateState::Ready { path } => {
+                let p = path.clone();
+                let mut close = false;
+                egui::Window::new("Update Ready")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label("Download complete. Replace binary?");
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("Replace & Restart").clicked() {
+                                let exe = std::env::current_exe().ok().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+                                let is_appimage = exe.contains(".AppImage");
+                                let ok = if is_appimage {
+                                    // AppImage: rename old, move new into place
+                                    let backup = format!("{exe}.bak");
+                                    let _ = std::fs::rename(&exe, &backup);
+                                    std::fs::rename(&p, &exe).is_ok() || std::fs::copy(&p, &exe).is_ok()
+                                } else {
+                                    std::fs::rename(&p, &exe).is_ok() || std::fs::copy(&p, &exe).is_ok()
+                                };
+                                if ok {
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                                } else {
+                                    self.update_state = UpdateState::Failed("Permission denied. Try manually:".into());
+                                }
+                                close = true;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                let _ = std::fs::remove_file(&p);
+                                self.update_state = UpdateState::Idle;
+                                close = true;
+                            }
+                        });
+                    });
+                if close { self.update_state = UpdateState::Idle; }
+            }
+            UpdateState::Failed(msg) => {
+                let m = msg.clone();
+                let mut close = false;
+                egui::Window::new("Update Failed")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), &m);
+                        ui.add_space(4.0);
+                        ui.label("Download manually:");
+                        ui.hyperlink_to("GitHub Releases", format!("https://github.com/{}/releases", config::REPO));
+                        if ui.button("OK").clicked() {
+                            close = true;
+                        }
+                    });
+                if close { self.update_state = UpdateState::Idle; }
+            }
+            UpdateState::UpToDate => {
+                let mut close = false;
+                egui::Window::new("Update")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(egui::RichText::new("You're up to date ✓").color(Color32::from_rgb(0xa6, 0xe3, 0xa1)).size(14.0));
+                        if ui.button("OK").clicked() {
+                            close = true;
+                        }
+                    });
+                if close { self.update_state = UpdateState::Idle; }
+            }
+            _ => {}
+        }
 
         if self.show_rename {
             let old = self.rename_old.clone();
@@ -1120,4 +1297,61 @@ fn elide(painter: &egui::Painter, text: &str, font: FontId, max_w: f32) -> Strin
         end -= 1;
     }
     String::from("…")
+}
+
+fn check_update(repo: &str, current: &str) -> UpdateState {
+    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
+    match ureq::get(&url).set("User-Agent", "gitr").call() {
+        Ok(resp) => {
+            let body = match resp.into_string() {
+                Ok(b) => b,
+                Err(_) => return UpdateState::Failed("Failed to read response".into()),
+            };
+            let json: serde_json::Value = match serde_json::from_str(&body) {
+                Ok(v) => v,
+                Err(_) => return UpdateState::Failed("Invalid response".into()),
+            };
+            let tag = json["tag_name"].as_str().unwrap_or("").trim_start_matches('v');
+            let notes = json["body"].as_str().unwrap_or("").to_string();
+            let assets = json["assets"].as_array().map(|a| {
+                a.iter().filter_map(|a| {
+                    let name = a["name"].as_str()?;
+                    let browser = a["browser_download_url"].as_str()?;
+                    Some((name.to_string(), browser.to_string()))
+                }).collect::<Vec<_>>()
+            }).unwrap_or_default();
+            if tag.is_empty() {
+                return UpdateState::Failed("No releases found".into());
+            }
+            // Simple version compare (e.g., "0.1.0" vs "0.2.0")
+            if tag == current {
+                return UpdateState::UpToDate;
+            }
+            // Find AppImage or binary URL
+            let url = assets.iter().find(|(n, _)| n.contains("x86_64.AppImage"))
+                .or_else(|| assets.iter().find(|(n, _)| n.contains("linux-x86_64.tar.gz")))
+                .map(|(_, u)| u.clone())
+                .unwrap_or_else(|| format!("https://github.com/{repo}/releases/tag/v{tag}"));
+            UpdateState::Available { version: tag.to_string(), url, notes }
+        }
+        Err(e) => UpdateState::Failed(format!("Network error: {e}")),
+    }
+}
+
+fn download_update(url: &str, dest: &str, downloaded: &Arc<std::sync::Mutex<u64>>, total: &Arc<std::sync::Mutex<u64>>) -> Result<(), String> {
+    let resp = ureq::get(url).set("User-Agent", "gitr").call().map_err(|e| format!("Download failed: {e}"))?;
+    let len = resp.header("Content-Length").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+    *total.lock().unwrap() = len;
+    let mut reader = resp.into_reader();
+    let mut file = std::fs::File::create(dest).map_err(|e| format!("Cannot create file: {e}"))?;
+    let mut buf = [0u8; 65536];
+    let mut done = 0u64;
+    loop {
+        let n = reader.read(&mut buf).map_err(|e| format!("Read error: {e}"))?;
+        if n == 0 { break; }
+        file.write_all(&buf[..n]).map_err(|e| format!("Write error: {e}"))?;
+        done += n as u64;
+        *downloaded.lock().unwrap() = done;
+    }
+    Ok(())
 }
