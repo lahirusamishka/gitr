@@ -61,6 +61,7 @@ pub struct App {
     pub update_state: UpdateState,
     pub pending_update: Arc<std::sync::Mutex<Option<UpdateState>>>,
     pub dl_progress: Option<(Arc<std::sync::Mutex<u64>>, Arc<std::sync::Mutex<u64>>)>,
+    pub replace_failed: bool,
 }
 
 impl App {
@@ -161,6 +162,7 @@ impl App {
             update_state: UpdateState::Idle,
             pending_update: Arc::new(std::sync::Mutex::new(None)),
             dl_progress: None,
+            replace_failed: false,
         };
         app
     }
@@ -710,7 +712,8 @@ impl eframe::App for App {
             UpdateState::Ready { path } => {
                 let p = path.clone();
                 let mut close = false;
-                let mut install_failed = false;
+                let exe = std::env::current_exe().ok().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+                let is_appimage = exe.contains(".AppImage");
                 egui::Window::new("Update Ready")
                     .collapsible(false)
                     .resizable(false)
@@ -718,8 +721,6 @@ impl eframe::App for App {
                     .show(ctx, |ui| {
                         ui.label("Download complete.");
                         ui.add_space(4.0);
-                        let exe = std::env::current_exe().ok().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-                        let is_appimage = exe.contains(".AppImage");
                         let file_size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
                         if file_size == 0 {
                             ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), "Downloaded file is empty or missing.");
@@ -739,12 +740,6 @@ impl eframe::App for App {
                                         .args(&["cp", &p, &exe])
                                         .status().map(|s| s.success()).unwrap_or(false);
                                 }
-                                // Try sudo as fallback
-                                if !ok {
-                                    ok = std::process::Command::new("sudo")
-                                        .args(&["cp", &p, &exe])
-                                        .status().map(|s| s.success()).unwrap_or(false);
-                                }
                                 if ok {
                                     let _ = std::fs::remove_file(&backup);
                                 }
@@ -754,18 +749,22 @@ impl eframe::App for App {
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                 close = true;
                             } else {
-                                install_failed = true;
+                                self.replace_failed = true;
                             }
                         }
-                        if install_failed {
+                        if self.replace_failed {
                             ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), "Could not replace the binary.");
                             ui.add_space(2.0);
-                            ui.label("Try running this in your terminal:");
-                            ui.monospace(format!("sudo cp {p} {exe}"));
+                            ui.label("Run this in your terminal:");
+                            ui.monospace(format!("cp {p} {exe}"));
+                            ui.add_space(2.0);
+                            ui.label("Then make it executable:");
+                            ui.monospace(format!("chmod +x {exe}"));
                         }
                         if ui.button("Cancel").clicked() {
                             let _ = std::fs::remove_file(&p);
                             self.update_state = UpdateState::Idle;
+                            self.replace_failed = false;
                             close = true;
                         }
                     });
