@@ -34,6 +34,7 @@ pub struct App {
     pub staged_files: Vec<String>,
     pub unstaged_files: Vec<String>,
     pub needs_reload: Arc<AtomicBool>,
+    pub initial_load: bool,
     pub diff_loading: Arc<AtomicBool>,
     pub file_diff_loading: Arc<AtomicBool>,
     pub pending_diff: Arc<std::sync::Mutex<Option<String>>>,
@@ -110,7 +111,7 @@ impl App {
                 }
             }
         });
-        let mut app = App {
+        let app = App {
             repo_path,
             rows: Vec::new(),
             selected: None,
@@ -130,6 +131,7 @@ impl App {
             staged_files: Vec::new(),
             unstaged_files: Vec::new(),
             needs_reload,
+            initial_load: true,
             diff_loading: Arc::new(AtomicBool::new(false)),
             file_diff_loading: Arc::new(AtomicBool::new(false)),
             pending_diff: Arc::new(std::sync::Mutex::new(None)),
@@ -142,7 +144,6 @@ impl App {
             del_origin: false,
             confirm_checkout: None,
         };
-        app.reload();
         app
     }
 
@@ -368,6 +369,20 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.initial_load {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.add_space(40.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(20.0);
+                    ui.add(egui::Spinner::new());
+                    ui.label("Loading repository…");
+                });
+            });
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            self.reload();
+            self.initial_load = false;
+            return;
+        }
         if let Some(text) = self.pending_diff.lock().unwrap().take() {
             self.diff_text = Some(text);
             self.diff_loading.store(false, Ordering::SeqCst);
