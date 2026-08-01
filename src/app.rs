@@ -43,6 +43,8 @@ impl App {
         let watch_path = repo_path.clone();
         std::thread::spawn(move || {
             let mut last_status = String::new();
+            let head_path = format!("{watch_path}/.git/HEAD");
+            let mut last_head: Option<std::time::SystemTime> = std::fs::metadata(&head_path).ok().and_then(|m| m.modified().ok());
             let refs_dir = format!("{watch_path}/.git/refs");
             let mut last_ref_times: Vec<(String, std::time::SystemTime)> = Vec::new();
             let scan_refs = |times: &mut Vec<(String, std::time::SystemTime)>| {
@@ -84,6 +86,14 @@ impl App {
                         last_status = cur;
                     }
                 }
+                if let Ok(meta) = std::fs::metadata(&head_path) {
+                    if let Ok(modified) = meta.modified() {
+                        if last_head.map_or(true, |t| t != modified) {
+                            watch_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                            last_head = Some(modified);
+                        }
+                    }
+                }
                 if scan_refs(&mut last_ref_times) {
                     watch_flag.store(true, std::sync::atomic::Ordering::SeqCst);
                 }
@@ -119,7 +129,7 @@ impl App {
             Ok(repo) => match commit::build_rows(&repo, self.limit, self.all_refs) {
                 Ok(mut rows) => {
                     self.current_branch = String::from_utf8_lossy(
-                        &Command::new("git").current_dir(&self.repo_path).args(&["rev-parse", "--abbrev-ref", "HEAD"]).output().map(|o| o.stdout).unwrap_or_default()
+                        &Command::new("git").current_dir(&self.repo_path).args(&["symbolic-ref", "--short", "HEAD"]).output().map(|o| o.stdout).unwrap_or_default()
                     ).trim().to_string();
                     self.load_status();
                     if !self.unstaged_files.is_empty() || !self.staged_files.is_empty() {
@@ -348,17 +358,15 @@ impl eframe::App for App {
                 ui.add_space(8.0);
                 let branch = &self.current_branch;
                 if !branch.is_empty() {
-                    ui.horizontal(|ui| {
-                        let bg = Color32::from_rgb(0x31, 0x32, 0x44);
-                        let fg = Color32::from_rgb(0xcd, 0xd6, 0xf4);
-                        let galley = ui.painter().layout_no_wrap(format!(" ⎇ {branch} "), FontId::proportional(12.0), fg);
-                        let w = galley.size().x + 16.0;
-                        let h = 20.0;
-                        let (rect, _) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::hover());
-                        let p = ui.painter_at(rect);
-                        p.rect_filled(rect, 6.0, bg);
-                        p.galley(rect.min + egui::vec2(8.0, (h - galley.size().y) / 2.0), galley, fg);
-                    });
+                    let fg = Color32::from_rgb(0xcd, 0xd6, 0xf4);
+                    let bg = Color32::from_rgb(0x31, 0x32, 0x44);
+                    let galley = ui.painter().layout_no_wrap(format!(" ⎇ {branch} "), FontId::proportional(12.0), fg);
+                    let w = galley.size().x + 16.0;
+                    let h = 20.0;
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::hover());
+                    let p = ui.painter_at(rect);
+                    p.rect_filled(rect, 6.0, bg);
+                    p.galley(rect.min + egui::vec2(8.0, (h - galley.size().y) / 2.0), galley, fg);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("⟳ Refresh").clicked() {
@@ -743,7 +751,9 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
             }
             for b in &row.branches {
                 if tx >= cap_x { break; }
-                tx = draw_pill(&painter, tx, yc, b, Color32::from_rgb(0x1e, 0x1e, 0x2e), Color32::from_rgb(0x89, 0xb4, 0xfa));
+                let is_current = b == &app.current_branch;
+                let bg = if is_current { Color32::from_rgb(0xa6, 0xe3, 0xa1) } else { Color32::from_rgb(0x89, 0xb4, 0xfa) };
+                tx = draw_pill(&painter, tx, yc, b, Color32::from_rgb(0x1e, 0x1e, 0x2e), bg);
             }
             for t in &row.tags {
                 if tx >= cap_x { break; }
