@@ -360,7 +360,7 @@ impl eframe::App for App {
                 if !branch.is_empty() {
                     let fg = Color32::from_rgb(0xcd, 0xd6, 0xf4);
                     let bg = Color32::from_rgb(0x31, 0x32, 0x44);
-                    let galley = ui.painter().layout_no_wrap(format!(" ⎇ {branch} "), FontId::proportional(12.0), fg);
+                    let galley = ui.painter().layout_no_wrap(format!(" {branch} "), FontId::proportional(12.0), fg);
                     let w = galley.size().x + 16.0;
                     let h = 20.0;
                     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::hover());
@@ -615,8 +615,8 @@ fn draw_details(app: &mut App, ui: &mut egui::Ui) {
 fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
     let total_height = app.rows.len() as f32 * config::ROW_HEIGHT + config::ROW_HEIGHT;
     let text_col_x = app.graph_width;
-        let width = ui.available_width().max(text_col_x + 400.0);
-        let (rect, response) = ui.allocate_exact_size(Vec2::new(width, total_height), Sense::click());
+        let avail_w = ui.available_width().max(text_col_x);
+        let (rect, response) = ui.allocate_exact_size(Vec2::new(avail_w, total_height), Sense::click());
         let painter = ui.painter_at(rect);
         let origin = rect.min;
 
@@ -652,10 +652,15 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
         let y_center = |i: usize| origin.y + i as f32 * config::ROW_HEIGHT + config::ROW_HEIGHT / 2.0;
         let x_lane = |l: usize| origin.x + config::GRAPH_PAD_LEFT + l as f32 * config::LANE_WIDTH;
 
+        let meta_w = config::COL_HASH + 8.0 + config::COL_DATE + 8.0 + config::COL_AUTHOR + 12.0 + config::GRAPH_PAD_RIGHT;
+        let space_for_msg = avail_w - text_col_x - meta_w;
+        let show_hash = space_for_msg > 120.0;
+        let show_date = space_for_msg > 220.0;
+        let show_author = space_for_msg > 340.0;
         let x_hash = rect.max.x - config::GRAPH_PAD_RIGHT;
-        let x_date = x_hash - config::COL_HASH - 8.0;
-        let x_author = x_date - config::COL_DATE - 8.0;
-        let x_msg_end = x_author - config::COL_AUTHOR - 12.0;
+        let x_date = if show_date { x_hash - config::COL_HASH - 8.0 } else { x_hash };
+        let x_author = if show_author { x_date - config::COL_DATE - 8.0 } else { x_date };
+        let x_msg_end = if show_author { x_author - config::COL_AUTHOR - 12.0 } else { avail_w - 10.0 };
 
         for i in 0..app.rows.len() {
             let top = origin.y + i as f32 * config::ROW_HEIGHT;
@@ -778,30 +783,36 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                 msg_color,
             );
 
-            let author = elide(&painter, &row.author, FontId::proportional(11.5), config::COL_AUTHOR);
-            painter.text(
-                Pos2::new(x_author, yc),
-                egui::Align2::RIGHT_CENTER,
-                &author,
-                FontId::proportional(11.5),
-                config::C_SUBTEXT,
-            );
+            if show_author {
+                let author = elide(&painter, &row.author, FontId::proportional(11.5), config::COL_AUTHOR);
+                painter.text(
+                    Pos2::new(x_author, yc),
+                    egui::Align2::RIGHT_CENTER,
+                    &author,
+                    FontId::proportional(11.5),
+                    config::C_SUBTEXT,
+                );
+            }
 
-            painter.text(
-                Pos2::new(x_date, yc),
-                egui::Align2::RIGHT_CENTER,
-                commit::format_time(row.time, row.offset_min),
-                FontId::proportional(11.5),
-                config::C_SUBTEXT,
-            );
+            if show_date {
+                painter.text(
+                    Pos2::new(x_date, yc),
+                    egui::Align2::RIGHT_CENTER,
+                    commit::format_time(row.time, row.offset_min),
+                    FontId::proportional(11.5),
+                    config::C_SUBTEXT,
+                );
+            }
 
-            painter.text(
-                Pos2::new(x_hash, yc),
-                egui::Align2::RIGHT_CENTER,
-                &row.short,
-                FontId::monospace(11.0),
-                config::C_HASH,
-            );
+            if show_hash {
+                painter.text(
+                    Pos2::new(x_hash, yc),
+                    egui::Align2::RIGHT_CENTER,
+                    &row.short,
+                    FontId::monospace(11.0),
+                    config::C_HASH,
+                );
+            }
         }
 
         let _ = PathShape::convex_polygon(vec![], Color32::TRANSPARENT, Stroke::NONE);
