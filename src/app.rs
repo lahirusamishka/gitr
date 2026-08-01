@@ -30,6 +30,7 @@ pub struct App {
     pub selected_is_staged: bool,
     pub side_by_side: bool,
     pub show_about: bool,
+    pub current_branch: String,
     pub staged_files: Vec<String>,
     pub unstaged_files: Vec<String>,
     pub needs_reload: Arc<AtomicBool>,
@@ -104,6 +105,7 @@ impl App {
             selected_is_staged: false,
             side_by_side: false,
             show_about: false,
+            current_branch: String::new(),
             staged_files: Vec::new(),
             unstaged_files: Vec::new(),
             needs_reload,
@@ -116,6 +118,9 @@ impl App {
         match Repository::discover(&self.repo_path) {
             Ok(repo) => match commit::build_rows(&repo, self.limit, self.all_refs) {
                 Ok(mut rows) => {
+                    self.current_branch = String::from_utf8_lossy(
+                        &Command::new("git").current_dir(&self.repo_path).args(&["rev-parse", "--abbrev-ref", "HEAD"]).output().map(|o| o.stdout).unwrap_or_default()
+                    ).trim().to_string();
                     self.load_status();
                     if !self.unstaged_files.is_empty() || !self.staged_files.is_empty() {
                         if let Some(head_idx) = rows.iter().position(|r| r.is_head) {
@@ -340,6 +345,21 @@ impl eframe::App for App {
                     std::fs::canonicalize(&self.repo_path).ok().and_then(|p| p.file_name().and_then(|n| n.to_str().map(|s| s.to_owned()))).unwrap_or(self.repo_path.clone())
                 });
                 ui.label(egui::RichText::new(repo_display).strong().size(14.0).color(Color32::from_rgb(0x89, 0xb4, 0xfa)));
+                ui.add_space(8.0);
+                let branch = &self.current_branch;
+                if !branch.is_empty() {
+                    ui.horizontal(|ui| {
+                        let bg = Color32::from_rgb(0x31, 0x32, 0x44);
+                        let fg = Color32::from_rgb(0xcd, 0xd6, 0xf4);
+                        let galley = ui.painter().layout_no_wrap(format!(" ⎇ {branch} "), FontId::proportional(12.0), fg);
+                        let w = galley.size().x + 16.0;
+                        let h = 20.0;
+                        let (rect, _) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::hover());
+                        let p = ui.painter_at(rect);
+                        p.rect_filled(rect, 6.0, bg);
+                        p.galley(rect.min + egui::vec2(8.0, (h - galley.size().y) / 2.0), galley, fg);
+                    });
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("⟳ Refresh").clicked() {
                         self.reload();
