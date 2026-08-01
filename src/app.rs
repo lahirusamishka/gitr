@@ -27,6 +27,8 @@ pub struct App {
     pub file_diff: Option<String>,
     pub side_by_side: bool,
     pub show_about: bool,
+    pub staged_files: Vec<String>,
+    pub unstaged_files: Vec<String>,
 }
 
 impl App {
@@ -46,6 +48,8 @@ impl App {
             file_diff: None,
             side_by_side: false,
             show_about: false,
+            staged_files: Vec::new(),
+            unstaged_files: Vec::new(),
         };
         app.reload();
         app
@@ -54,7 +58,36 @@ impl App {
     fn reload(&mut self) {
         match Repository::discover(&self.repo_path) {
             Ok(repo) => match commit::build_rows(&repo, self.limit, self.all_refs) {
-                Ok(rows) => {
+                Ok(mut rows) => {
+                    self.load_status();
+                    if !self.unstaged_files.is_empty() || !self.staged_files.is_empty() {
+                        if let Some(head_idx) = rows.iter().position(|r| r.is_head) {
+                            let head_lane = rows[head_idx].lane;
+                            let has_staged = !self.staged_files.is_empty();
+                            let has_unstaged = !self.unstaged_files.is_empty();
+                            let summary = match (has_staged, has_unstaged) {
+                                (true, false) => "staged changes",
+                                (false, true) => "unstaged changes",
+                                _ => "working tree changes",
+                            };
+                            rows.insert(0, commit::CommitRow {
+                                oid: git2::Oid::zero(),
+                                short: String::new(),
+                                lane: head_lane,
+                                passthrough: Vec::new(),
+                                parent_lanes: vec![head_lane],
+                                author: String::new(),
+                                email: String::new(),
+                                time: 0,
+                                offset_min: 0,
+                                summary: summary.to_string(),
+                                branches: Vec::new(),
+                                tags: Vec::new(),
+                                is_head: false,
+                                is_working: true,
+                            });
+                        }
+                    }
                     self.graph_width =
                         config::GRAPH_PAD_LEFT + commit::max_lanes(&rows) as f32 * config::LANE_WIDTH + config::GRAPH_PAD_RIGHT;
                     self.rows = rows;
@@ -77,6 +110,16 @@ impl App {
 
     fn load_changed_files(&mut self) {
         if let Some(i) = self.selected {
+            if self.rows[i].is_working {
+                let mut merged = self.staged_files.clone();
+                for f in &self.unstaged_files {
+                    if !merged.contains(f) {
+                        merged.push(f.clone());
+                    }
+                }
+                self.changed_files = merged;
+                return;
+            }
             let hash = self.rows[i].oid.to_string();
             if let Ok(out) = Command::new("git")
                 .current_dir(&self.repo_path)
@@ -91,6 +134,22 @@ impl App {
 
     fn load_file_diff(&mut self, file: &str) {
         if let Some(i) = self.selected {
+            if self.rows[i].is_working {
+                let args = if self.staged_files.contains(&file.to_string()) {
+                    vec!["diff", "--cached", "--", file]
+                } else {
+                    vec!["diff", "--", file]
+                };
+                if let Ok(out) = Command::new("git")
+                    .current_dir(&self.repo_path)
+                    .args(&args)
+                    .output()
+                {
+                    self.file_diff = Some(String::from_utf8_lossy(&out.stdout).to_string());
+                    self.selected_file = Some(file.to_string());
+                }
+                return;
+            }
             let hash = self.rows[i].oid.to_string();
             if let Ok(out) = Command::new("git")
                 .current_dir(&self.repo_path)
@@ -105,6 +164,17 @@ impl App {
 
     fn load_diff(&mut self, stat_only: bool) {
         if let Some(i) = self.selected {
+            if self.rows[i].is_working {
+                let out = Command::new("git")
+                    .current_dir(&self.repo_path)
+                    .args(&["diff", "HEAD"])
+                    .output();
+                self.diff_text = match out {
+                    Ok(o) => Some(String::from_utf8_lossy(&o.stdout).to_string()),
+                    Err(e) => Some(format!("failed to run git diff: {e}")),
+                };
+                return;
+            }
             let hash = self.rows[i].oid.to_string();
             let args: &[&str] = if stat_only {
                 &["diff-tree", "--no-commit-id", "-r", "--stat", &hash]
@@ -119,6 +189,30 @@ impl App {
                 Ok(o) => Some(String::from_utf8_lossy(&o.stdout).to_string()),
                 Err(e) => Some(format!("failed to run git show: {e}")),
             };
+        }
+    }
+
+    fn load_status(&mut self) {
+        if let Ok(out) = Command::new("git")
+            .current_dir(&self.repo_path)
+            .args(&["status", "--porcelain"])
+            .output()
+        {
+            let text = String::from_utf8_lossy(&out.stdout);
+            self.staged_files.clear();
+            self.unstaged_files.clear();
+            for line in text.lines() {
+                if line.len() < 3 { continue; }
+                let staged = line.as_bytes()[0] as char;
+                let unstaged = line.as_bytes()[1] as char;
+                let file = line[3..].to_string();
+                if staged != ' ' {
+                    self.staged_files.push(file.clone());
+                }
+                if unstaged != ' ' {
+                    self.unstaged_files.push(file);
+                }
+            }
         }
     }
 
@@ -253,7 +347,12 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ctx, |ui| {
             let file_count = self.changed_files.len();
             if file_count > 0 {
-                let file_h = file_count as f32 * 19.0 + 44.0;
+                let is_working = self.selected.map(|i| self.rows[i].is_working).unwrap_or(false);
+                let file_h = if is_working {
+                    (self.staged_files.len() + self.unstaged_files.len()) as f32 * 19.0 + 68.0
+                } else {
+                    file_count as f32 * 19.0 + 44.0
+                };
                 let rects = ui.max_rect();
                 let (graph_rect, file_rect) = rects.split_top_bottom_at_y(rects.height() - file_h);
 
@@ -265,20 +364,53 @@ impl eframe::App for App {
                 let mut file_ui = ui.child_ui(file_rect, egui::Layout::top_down(egui::Align::LEFT), None);
                 file_ui.separator();
                 file_ui.add_space(2.0);
-                file_ui.label(egui::RichText::new(format!("files changed  {}", file_count)).size(11.0).color(config::C_SUBTEXT));
                 let file_font = FontId::monospace(12.0);
-                let files: Vec<String> = self.changed_files.clone();
                 let mut clicked: Option<String> = None;
                 let sel = self.selected_file.clone();
-                for file in &files {
-                    let selected = sel.as_deref() == Some(file.as_str());
-                    let color = if selected { Color32::from_rgb(0x89, 0xb4, 0xfa) } else { config::C_TEXT };
-                    let resp = file_ui.add(
-                        egui::Label::new(egui::RichText::new(file).color(color).font(file_font.clone()))
-                            .sense(Sense::click()),
-                    ).on_hover_cursor(egui::CursorIcon::PointingHand);
-                    if resp.clicked() {
-                        clicked = Some(file.clone());
+
+                if is_working {
+                    if !self.staged_files.is_empty() {
+                        file_ui.label(egui::RichText::new(format!("staged  {}", self.staged_files.len())).size(11.0).color(Color32::from_rgb(0xf9, 0xe2, 0xaf)));
+                        for file in &self.staged_files {
+                            let selected = sel.as_deref() == Some(file.as_str());
+                            let color = if selected { Color32::from_rgb(0x89, 0xb4, 0xfa) } else { Color32::from_rgb(0xf9, 0xe2, 0xaf) };
+                            let resp = file_ui.add(
+                                egui::Label::new(egui::RichText::new(format!("  {file}")).color(color).font(file_font.clone()))
+                                    .sense(Sense::click()),
+                            ).on_hover_cursor(egui::CursorIcon::PointingHand);
+                            if resp.clicked() {
+                                clicked = Some(file.clone());
+                            }
+                        }
+                    }
+                    if !self.unstaged_files.is_empty() {
+                        file_ui.add_space(2.0);
+                        file_ui.label(egui::RichText::new(format!("unstaged  {}", self.unstaged_files.len())).size(11.0).color(Color32::from_rgb(0xf3, 0x8b, 0xa8)));
+                        for file in &self.unstaged_files {
+                            let selected = sel.as_deref() == Some(file.as_str());
+                            let color = if selected { Color32::from_rgb(0x89, 0xb4, 0xfa) } else { Color32::from_rgb(0xf3, 0x8b, 0xa8) };
+                            let resp = file_ui.add(
+                                egui::Label::new(egui::RichText::new(format!("  {file}")).color(color).font(file_font.clone()))
+                                    .sense(Sense::click()),
+                            ).on_hover_cursor(egui::CursorIcon::PointingHand);
+                            if resp.clicked() {
+                                clicked = Some(file.clone());
+                            }
+                        }
+                    }
+                } else {
+                    file_ui.label(egui::RichText::new(format!("files changed  {}", file_count)).size(11.0).color(config::C_SUBTEXT));
+                    let files: Vec<String> = self.changed_files.clone();
+                    for file in &files {
+                        let selected = sel.as_deref() == Some(file.as_str());
+                        let color = if selected { Color32::from_rgb(0x89, 0xb4, 0xfa) } else { config::C_TEXT };
+                        let resp = file_ui.add(
+                            egui::Label::new(egui::RichText::new(format!("  {file}")).color(color).font(file_font.clone()))
+                                .sense(Sense::click()),
+                        ).on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if resp.clicked() {
+                            clicked = Some(file.clone());
+                        }
                     }
                 }
                 if let Some(f) = clicked {
@@ -405,6 +537,16 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                 app.diff_text = None;
                 app.file_diff = None;
                 app.selected_file = None;
+                if app.rows[idx].is_working {
+                    app.load_status();
+                    let has_staged = !app.staged_files.is_empty();
+                    let has_unstaged = !app.unstaged_files.is_empty();
+                    app.rows[idx].summary = match (has_staged, has_unstaged) {
+                        (true, false) => "staged changes",
+                        (false, true) => "unstaged changes",
+                        _ => "working tree changes",
+                    }.to_string();
+                }
                 app.load_changed_files();
                 app.load_diff(false);
             }
@@ -470,12 +612,24 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
 
         for (i, row) in app.rows.iter().enumerate() {
             let center = Pos2::new(x_lane(row.lane), y_center(i));
-            let node_color = config::lane_color(row.lane);
-            if row.is_head {
+            if row.is_working {
+                let node_color = if !app.staged_files.is_empty() && app.unstaged_files.is_empty() {
+                    Color32::from_rgb(0xf9, 0xe2, 0xaf)
+                } else if app.staged_files.is_empty() && !app.unstaged_files.is_empty() {
+                    Color32::from_rgb(0xf3, 0x8b, 0xa8)
+                } else {
+                    Color32::from_rgb(0xf9, 0xe2, 0xaf)
+                };
                 painter.circle_filled(center, config::NODE_RADIUS + 1.5, Color32::from_rgb(0x1e, 0x1e, 0x2e));
                 painter.circle_stroke(center, config::NODE_RADIUS, Stroke::new(2.2_f32, node_color));
             } else {
-                painter.circle_filled(center, config::NODE_RADIUS, node_color);
+                let node_color = config::lane_color(row.lane);
+                if row.is_head {
+                    painter.circle_filled(center, config::NODE_RADIUS + 1.5, Color32::from_rgb(0x1e, 0x1e, 0x2e));
+                    painter.circle_stroke(center, config::NODE_RADIUS, Stroke::new(2.2_f32, node_color));
+                } else {
+                    painter.circle_filled(center, config::NODE_RADIUS, node_color);
+                }
             }
         }
 
@@ -485,6 +639,16 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
 
             // Cap pills so they don't extend into the metadata columns.
             let cap_x = x_author - 20.0;
+            if row.is_working && tx < cap_x {
+                let has_staged = !app.staged_files.is_empty();
+                let has_unstaged = !app.unstaged_files.is_empty();
+                let (pill_label, pill_bg) = match (has_staged, has_unstaged) {
+                    (true, false) => ("STAGED", Color32::from_rgb(0xf9, 0xe2, 0xaf)),
+                    (false, true) => ("UNSTAGED", Color32::from_rgb(0xf3, 0x8b, 0xa8)),
+                    _ => ("WORKING", Color32::from_rgb(0xf9, 0xe2, 0xaf)),
+                };
+                tx = draw_pill(&painter, tx, yc, pill_label, Color32::from_rgb(0x1e, 0x1e, 0x2e), pill_bg);
+            }
             if row.is_head && tx < cap_x {
                 tx = draw_pill(&painter, tx, yc, "HEAD", Color32::from_rgb(0x1e, 0x1e, 0x2e), Color32::from_rgb(0xf3, 0x8b, 0xa8));
             }
@@ -497,13 +661,22 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                 tx = draw_pill(&painter, tx, yc, t, Color32::from_rgb(0x1e, 0x1e, 0x2e), Color32::from_rgb(0xfa, 0xb3, 0x87));
             }
 
+            let msg_color = if row.is_working {
+                if !app.staged_files.is_empty() && app.unstaged_files.is_empty() {
+                    Color32::from_rgb(0xf9, 0xe2, 0xaf)
+                } else if app.staged_files.is_empty() && !app.unstaged_files.is_empty() {
+                    Color32::from_rgb(0xf3, 0x8b, 0xa8)
+                } else {
+                    Color32::from_rgb(0xf9, 0xe2, 0xaf)
+                }
+            } else { config::C_TEXT };
             let msg = elide(&painter, &row.summary, FontId::proportional(12.5), x_msg_end - tx);
             painter.text(
                 Pos2::new(tx, yc),
                 egui::Align2::LEFT_CENTER,
                 &msg,
                 FontId::proportional(12.5),
-                config::C_TEXT,
+                msg_color,
             );
 
             let author = elide(&painter, &row.author, FontId::proportional(11.5), config::COL_AUTHOR);
