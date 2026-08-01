@@ -179,7 +179,10 @@ impl eframe::App for App {
             });
             ui.add_space(2.0);
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(&self.repo_path).strong());
+                let repo_display = std::path::Path::new(&self.repo_path).file_name().and_then(|n| n.to_str()).map(|s| s.to_owned()).unwrap_or_else(|| {
+                    std::fs::canonicalize(&self.repo_path).ok().and_then(|p| p.file_name().and_then(|n| n.to_str().map(|s| s.to_owned()))).unwrap_or(self.repo_path.clone())
+                });
+                ui.label(egui::RichText::new(repo_display).strong().size(14.0).color(Color32::from_rgb(0x89, 0xb4, 0xfa)));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("⟳ Refresh").clicked() {
                         self.reload();
