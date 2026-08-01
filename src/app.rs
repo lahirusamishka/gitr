@@ -1,5 +1,4 @@
 use std::process::Command;
-use std::sync::Arc;
 
 use eframe::egui;
 use egui::{
@@ -200,7 +199,7 @@ impl eframe::App for App {
         }
 
         egui::SidePanel::right("details")
-            .min_width(520.0)
+            .min_width(300.0)
             .resizable(true)
             .show(ctx, |ui| {
                 draw_details(self, ui);
@@ -209,18 +208,15 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ctx, |ui| {
             let file_count = self.changed_files.len();
             if file_count > 0 {
-                // Reserve space at the bottom for the file list.
                 let file_h = file_count as f32 * 19.0 + 44.0;
                 let rects = ui.max_rect();
                 let (graph_rect, file_rect) = rects.split_top_bottom_at_y(rects.height() - file_h);
 
-                // Graph area
                 let mut graph_ui = ui.child_ui(graph_rect, egui::Layout::top_down(egui::Align::LEFT), None);
                 egui::ScrollArea::both().auto_shrink([false, false]).show(&mut graph_ui, |ui| {
                     draw_graph_inner(self, ui);
                 });
 
-                // File list area
                 let mut file_ui = ui.child_ui(file_rect, egui::Layout::top_down(egui::Align::LEFT), None);
                 file_ui.separator();
                 file_ui.add_space(2.0);
@@ -235,7 +231,7 @@ impl eframe::App for App {
                     let resp = file_ui.add(
                         egui::Label::new(egui::RichText::new(file).color(color).font(file_font.clone()))
                             .sense(Sense::click()),
-                    );
+                    ).on_hover_cursor(egui::CursorIcon::PointingHand);
                     if resp.clicked() {
                         clicked = Some(file.clone());
                     }
@@ -253,7 +249,7 @@ impl eframe::App for App {
 }
 
 fn draw_details(app: &mut App, ui: &mut egui::Ui) {
-    egui::ScrollArea::vertical().show(ui, |ui| {
+    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         let Some(i) = app.selected else {
             ui.label("no commit selected");
             return;
@@ -305,49 +301,41 @@ fn draw_details(app: &mut App, ui: &mut egui::Ui) {
         if app.side_by_side {
             diff::draw_diff(ui, text);
         } else {
-            let display_layout = text.to_owned();
             let font = FontId::monospace(13.0);
-            let mut layouter = move |ui: &egui::Ui, _: &str, _: f32| -> Arc<egui::Galley> {
-                let mut job = LayoutJob::default();
-                for line in display_layout.lines() {
-                    if line.is_empty() {
-                        job.append("\n", 0.0, egui::TextFormat::simple(font.clone(), Color32::TRANSPARENT));
-                        continue;
-                    }
-                    let ch = line.chars().next().unwrap_or(' ');
-                    let (fg, bg) = match ch {
-                        '+' => (
-                            Color32::from_rgb(0xa6, 0xe3, 0xa1),
-                            Color32::from_rgba_unmultiplied(0x1a, 0x3c, 0x1a, 180),
-                        ),
-                        '-' => (
-                            Color32::from_rgb(0xf3, 0x8b, 0xa8),
-                            Color32::from_rgba_unmultiplied(0x3c, 0x1a, 0x1a, 180),
-                        ),
-                        '@' => (
-                            Color32::from_rgb(0x89, 0xb4, 0xfa),
-                            Color32::TRANSPARENT,
-                        ),
-                        _ => (
-                            Color32::from_rgb(0xba, 0xbe, 0xcc),
-                            Color32::TRANSPARENT,
-                        ),
-                    };
-                    let mut fmt = egui::TextFormat::simple(font.clone(), fg);
-                    fmt.background = bg;
-                    job.append(&format!("{}\n", line), 0.0, fmt);
+            let mut job = LayoutJob::default();
+            for line in text.lines() {
+                if line.is_empty() {
+                    job.append("\n", 0.0, egui::TextFormat::simple(font.clone(), Color32::TRANSPARENT));
+                    continue;
                 }
-                ui.fonts(|f| f.layout_job(job))
-            };
+                let ch = line.chars().next().unwrap_or(' ');
+                let (fg, bg) = match ch {
+                    '+' => (
+                        Color32::from_rgb(0xa6, 0xe3, 0xa1),
+                        Color32::from_rgba_unmultiplied(0x1a, 0x3c, 0x1a, 180),
+                    ),
+                    '-' => (
+                        Color32::from_rgb(0xf3, 0x8b, 0xa8),
+                        Color32::from_rgba_unmultiplied(0x3c, 0x1a, 0x1a, 180),
+                    ),
+                    '@' => (
+                        Color32::from_rgb(0x89, 0xb4, 0xfa),
+                        Color32::TRANSPARENT,
+                    ),
+                    _ => (
+                        Color32::from_rgb(0xba, 0xbe, 0xcc),
+                        Color32::TRANSPARENT,
+                    ),
+                };
+                let mut fmt = egui::TextFormat::simple(font.clone(), fg);
+                fmt.background = bg;
+                job.append(&format!("{}\n", line), 0.0, fmt);
+            }
 
-            let mut display = text.to_owned();
             egui::Frame::none().fill(Color32::from_rgb(0x1e, 0x1e, 0x2e)).show(ui, |ui| {
-                ui.add(
-                    egui::TextEdit::multiline(&mut display)
-                        .font(egui::TextStyle::Monospace)
-                        .desired_width(f32::INFINITY)
-                        .layouter(&mut layouter),
-                );
+                egui::ScrollArea::horizontal().auto_shrink([false, false]).show(ui, |ui| {
+                    ui.add(egui::Label::new(job.clone()));
+                });
             });
         }
     });
@@ -356,7 +344,7 @@ fn draw_details(app: &mut App, ui: &mut egui::Ui) {
 fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
     let total_height = app.rows.len() as f32 * config::ROW_HEIGHT + config::ROW_HEIGHT;
     let text_col_x = app.graph_width;
-        let width = ui.available_width().max(text_col_x + 600.0);
+        let width = ui.available_width().max(text_col_x + 400.0);
         let (rect, response) = ui.allocate_exact_size(Vec2::new(width, total_height), Sense::click());
         let painter = ui.painter_at(rect);
         let origin = rect.min;
@@ -381,9 +369,9 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
         let x_lane = |l: usize| origin.x + config::GRAPH_PAD_LEFT + l as f32 * config::LANE_WIDTH;
 
         let x_hash = rect.max.x - config::GRAPH_PAD_RIGHT;
-        let x_date = x_hash - config::COL_HASH;
-        let x_author = x_date - config::COL_DATE - config::COL_AUTHOR - 8.0;
-        let x_msg_end = x_author - 12.0;
+        let x_date = x_hash - config::COL_HASH - 8.0;
+        let x_author = x_date - config::COL_DATE - 8.0;
+        let x_msg_end = x_author - config::COL_AUTHOR - 12.0;
 
         for i in 0..app.rows.len() {
             let top = origin.y + i as f32 * config::ROW_HEIGHT;
@@ -476,7 +464,7 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
             let author = elide(&painter, &row.author, FontId::proportional(11.5), config::COL_AUTHOR);
             painter.text(
                 Pos2::new(x_author, yc),
-                egui::Align2::LEFT_CENTER,
+                egui::Align2::RIGHT_CENTER,
                 &author,
                 FontId::proportional(11.5),
                 config::C_SUBTEXT,
