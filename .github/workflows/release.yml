@@ -4,6 +4,7 @@
 # Usage:
 #   git tag v0.1.0 && git push origin v0.1.0
 #
+#
 # No extra setup needed — GITHUB_TOKEN is provided automatically.
 
 name: release
@@ -39,8 +40,15 @@ jobs:
             libxkbcommon-dev libfontconfig1-dev \
             fuse libfuse2 imagemagick
 
+      - name: Sync version from tag
+        run: |
+          TAG="${{ github.ref_name }}"
+          VER="${TAG#v}"
+          echo "Setting version to $VER"
+          sed -i "s/^version = .*/version = \"$VER\"/" Cargo.toml
+
       - name: Build release binary
-        run: cargo build --release --locked
+        run: cargo build --release
 
       - name: Package plain tarball
         run: |
