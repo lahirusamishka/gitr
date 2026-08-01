@@ -47,7 +47,7 @@ jobs:
           sed -i "s/^version = .*/version = \"$VER\"/" Cargo.toml
 
       - name: Build release binary
-        run: cargo build --release --locked
+        run: cargo build --release
 
       - name: Package plain tarball
         run: |
