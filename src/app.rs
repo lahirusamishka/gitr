@@ -39,6 +39,7 @@ pub struct App {
     pub rename_old: String,
     pub rename_new: String,
     pub confirm_delete: Option<String>,
+    pub del_origin: bool,
     pub confirm_checkout: Option<String>,
 }
 
@@ -130,6 +131,7 @@ impl App {
             rename_old: String::new(),
             rename_new: String::new(),
             confirm_delete: None,
+            del_origin: false,
             confirm_checkout: None,
         };
         app.reload();
@@ -362,7 +364,9 @@ impl eframe::App for App {
             self.reload();
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
-        if ctx.input(|i| i.key_pressed(egui::Key::Q) && i.modifiers.ctrl) {
+        if ctx.input(|i| (i.key_pressed(egui::Key::Q) || i.key_pressed(egui::Key::C)) && i.modifiers.ctrl)
+            || ctx.input(|i| i.key_pressed(egui::Key::Escape))
+        {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         if ctx.input(|i| i.key_pressed(egui::Key::R) && i.modifiers.ctrl) {
@@ -595,7 +599,6 @@ impl eframe::App for App {
         if let Some(branch) = &self.confirm_delete.clone() {
             let del_branch = branch.clone();
             let repo_path = self.repo_path.clone();
-            let mut del_origin = false;
             let mut close = false;
             egui::Window::new("Delete branch")
                 .collapsible(false)
@@ -604,12 +607,12 @@ impl eframe::App for App {
                 .show(ctx, |ui| {
                     ui.label(format!("Delete \"{del_branch}\"?"));
                     ui.add_space(4.0);
-                    ui.checkbox(&mut del_origin, "also delete from origin");
+                    ui.checkbox(&mut self.del_origin, "also delete from origin");
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         if ui.button("Yes").clicked() {
                             let _ = std::process::Command::new("git").current_dir(&repo_path).args(&["branch", "-d", &del_branch]).output();
-                            if del_origin {
+                            if self.del_origin {
                                 let _ = std::process::Command::new("git").current_dir(&repo_path).args(&["push", "origin", "--delete", &del_branch]).output();
                             }
                             self.reload();
@@ -907,6 +910,7 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                         app.reload();
                     }
                 } else {
+                    let is_current = branch == &app.current_branch;
                     let is_remote = branch.contains('/');
                     if is_remote {
                         if ui.button("Checkout as local branch").clicked() {
@@ -919,13 +923,16 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                             app.confirm_checkout = Some(branch.clone());
                         }
                     }
-                    if ui.button("Rename branch…").clicked() {
-                        app.rename_old = branch.clone();
-                        app.rename_new = branch.clone();
-                        app.show_rename = true;
-                    }
-                    if ui.button("Delete branch").clicked() {
-                        app.confirm_delete = Some(branch.clone());
+                    if !is_remote {
+                        if ui.button("Rename branch…").clicked() {
+                            app.rename_old = branch.clone();
+                            app.rename_new = branch.clone();
+                            app.show_rename = true;
+                        }
+                        if !is_current && ui.button("Delete branch").clicked() {
+                            app.confirm_delete = Some(branch.clone());
+                            app.del_origin = false;
+                        }
                     }
                 }
             }

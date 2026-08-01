@@ -21,6 +21,11 @@ fn print_help() {
 }
 
 fn main() -> eframe::Result<()> {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("gitr crashed: {info}");
+        eprintln!("Press Ctrl+C to close this terminal.");
+    }));
+
     let mut path = String::from(".");
     let mut limit: usize = 1000;
     let mut all_refs = true;
