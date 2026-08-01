@@ -51,10 +51,12 @@ pub struct App {
     pub pending_diff: Arc<std::sync::Mutex<Option<String>>>,
     pub pending_file_diff: Arc<std::sync::Mutex<Option<(String, String, bool)>>>,
     pub context_branch: Option<String>,
+    pub context_tag: Option<String>,
     pub show_rename: bool,
     pub rename_old: String,
     pub rename_new: String,
     pub confirm_delete: Option<String>,
+    pub confirm_delete_tag: Option<String>,
     pub del_origin: bool,
     pub confirm_checkout: Option<String>,
     pub update_state: UpdateState,
@@ -152,10 +154,12 @@ impl App {
             pending_diff: Arc::new(std::sync::Mutex::new(None)),
             pending_file_diff: Arc::new(std::sync::Mutex::new(None)),
             context_branch: None,
+            context_tag: None,
             show_rename: false,
             rename_old: String::new(),
             rename_new: String::new(),
             confirm_delete: None,
+            confirm_delete_tag: None,
             del_origin: false,
             confirm_checkout: None,
             update_state: UpdateState::Idle,
@@ -865,6 +869,33 @@ impl eframe::App for App {
             }
         }
 
+        if let Some(tag) = &self.confirm_delete_tag.clone() {
+            let del_tag = tag.clone();
+            let repo_path = self.repo_path.clone();
+            let mut close = false;
+            egui::Window::new("Delete tag")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(format!("Delete tag \"{del_tag}\"?"));
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Yes").clicked() {
+                            let _ = std::process::Command::new("git").current_dir(&repo_path).args(&["tag", "-d", &del_tag]).output();
+                            self.reload();
+                            close = true;
+                        }
+                        if ui.button("No").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+            if close {
+                self.confirm_delete_tag = None;
+            }
+        }
+
         if let Some(branch) = &self.confirm_checkout.clone() {
             let target = branch.clone();
             let repo_path = self.repo_path.clone();
@@ -1193,6 +1224,18 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                     }
                 }
             }
+            if let Some(tag) = &app.context_tag.clone() {
+                ui.set_min_width(200.0);
+                ui.label(egui::RichText::new(tag).strong().size(12.0).color(Color32::from_rgb(0xfa, 0xb3, 0x87)));
+                ui.separator();
+                if ui.button("Push tag").clicked() {
+                    let _ = std::process::Command::new("git").current_dir(&app.repo_path).args(&["push", "origin", tag]).output();
+                    app.reload();
+                }
+                if ui.button("Delete tag").clicked() {
+                    app.confirm_delete_tag = Some(tag.clone());
+                }
+            }
         });
 
         for (i, row) in app.rows.iter().enumerate() {
@@ -1226,12 +1269,21 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                     let row_top = origin.y + i as f32 * config::ROW_HEIGHT;
                     if pos.y >= row_top && pos.y < row_top + config::ROW_HEIGHT && pos.x >= pill_start && pos.x < tx {
                         app.context_branch = Some(b.clone());
+                        app.context_tag = None;
                     }
                 }
             }
             for t in &row.tags {
                 if tx >= cap_x { break; }
+                let pill_start = tx;
                 tx = draw_pill(&painter, tx, yc, t, Color32::from_rgb(0x1e, 0x1e, 0x2e), Color32::from_rgb(0xfa, 0xb3, 0x87));
+                if let Some(pos) = response.hover_pos() {
+                    let row_top = origin.y + i as f32 * config::ROW_HEIGHT;
+                    if pos.y >= row_top && pos.y < row_top + config::ROW_HEIGHT && pos.x >= pill_start && pos.x < tx {
+                        app.context_tag = Some(t.clone());
+                        app.context_branch = None;
+                    }
+                }
             }
 
             let msg_color = if row.is_stash {
