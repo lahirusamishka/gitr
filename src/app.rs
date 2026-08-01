@@ -382,8 +382,8 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
 
         let x_hash = rect.max.x - config::GRAPH_PAD_RIGHT;
         let x_date = x_hash - config::COL_HASH;
-        let x_author = x_date - config::COL_DATE;
-        let x_msg_end = x_author - config::COL_AUTHOR - 12.0;
+        let x_author = x_date - config::COL_DATE - config::COL_AUTHOR - 8.0;
+        let x_msg_end = x_author - 12.0;
 
         for i in 0..app.rows.len() {
             let top = origin.y + i as f32 * config::ROW_HEIGHT;
@@ -473,7 +473,7 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                 config::C_TEXT,
             );
 
-            let author = elide(&painter, &row.author, FontId::proportional(11.5), config::COL_AUTHOR - 8.0);
+            let author = elide(&painter, &row.author, FontId::proportional(11.5), config::COL_AUTHOR);
             painter.text(
                 Pos2::new(x_author, yc),
                 egui::Align2::LEFT_CENTER,
