@@ -26,6 +26,7 @@ pub struct App {
     pub selected_file: Option<String>,
     pub file_diff: Option<String>,
     pub side_by_side: bool,
+    pub show_about: bool,
 }
 
 impl App {
@@ -44,6 +45,7 @@ impl App {
             selected_file: None,
             file_diff: None,
             side_by_side: false,
+            show_about: false,
         };
         app.reload();
         app
@@ -143,53 +145,93 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Ctrl+Q / Cmd+Q to quit
         if ctx.input(|i| i.key_pressed(egui::Key::Q) && i.modifiers.ctrl) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+        if ctx.input(|i| i.key_pressed(egui::Key::R) && i.modifiers.ctrl) {
+            self.reload();
+        }
 
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("gitr — ").strong().color(Color32::from_rgb(0x89, 0xb4, 0xfa)));
-                ui.label(egui::RichText::new(&self.repo_path).strong());
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    if ui.add(egui::Button::new("Refresh").shortcut_text("Ctrl+R")).clicked() {
+                        self.reload();
+                    }
+                    ui.separator();
+                    if ui.add(egui::Button::new("Exit").shortcut_text("Ctrl+Q")).clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+                ui.menu_button("Help", |ui| {
+                    if ui.button("About gitr").clicked() {
+                        self.show_about = true;
+                    }
+                });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(format!("{} commits ", self.rows.len()));
                     if ui.button("☕ Buy me a coffee").clicked() {
                         let _ = webbrowser::open("https://buymeacoffee.com/lahirusamishka");
                     }
                     ui.separator();
-                    ui.label(format!("{} commits", self.rows.len()));
+                    ui.label(egui::RichText::new("gitr").strong().color(Color32::from_rgb(0x89, 0xb4, 0xfa)));
                 });
             });
             ui.add_space(2.0);
             ui.horizontal(|ui| {
-                if ui.button("⟳ Refresh").clicked() {
-                    self.reload();
-                }
-                ui.separator();
-                ui.checkbox(&mut self.all_refs, "all refs");
-                ui.separator();
-                ui.label("limit");
-                let mut limit_str = self.limit.to_string();
-                if ui.add(egui::TextEdit::singleline(&mut limit_str).desired_width(60.0)).changed() {
-                    if let Ok(v) = limit_str.parse() {
-                        self.limit = v;
+                ui.label(egui::RichText::new(&self.repo_path).strong());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("⟳ Refresh").clicked() {
+                        self.reload();
                     }
-                }
-                ui.separator();
-                ui.label("search");
-                let resp = ui.add(egui::TextEdit::singleline(&mut self.search).desired_width(160.0));
-                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    self.find_next();
-                }
-                if ui.button("Find").clicked() {
-                    self.find_next();
-                }
-                ui.separator();
-                ui.label("Ctrl+Q to exit");
+                    ui.separator();
+                    ui.checkbox(&mut self.all_refs, "all refs");
+                    ui.separator();
+                    ui.label("limit");
+                    let mut limit_str = self.limit.to_string();
+                    if ui.add(egui::TextEdit::singleline(&mut limit_str).desired_width(60.0)).changed() {
+                        if let Ok(v) = limit_str.parse() {
+                            self.limit = v;
+                        }
+                    }
+                    ui.separator();
+                    ui.label("search");
+                    let resp = ui.add(egui::TextEdit::singleline(&mut self.search).desired_width(160.0));
+                    if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        self.find_next();
+                    }
+                    if ui.button("Find").clicked() {
+                        self.find_next();
+                    }
+                });
             });
             ui.add_space(4.0);
         });
+
+        egui::Window::new("About gitr")
+            .open(&mut self.show_about)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(360.0)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(egui::RichText::new("gitr").strong().size(18.0).color(Color32::from_rgb(0x89, 0xb4, 0xfa)));
+                ui.add_space(2.0);
+                ui.label("Version 0.1.0");
+                ui.separator();
+                ui.add_space(4.0);
+                ui.label("Inspired by gitg (GNOME Git graphical interface) and gitk.");
+                ui.add_space(4.0);
+                ui.label("I love the git graph tree view and gitk is very easy to access in the terminal. I wanted both combined into one tool — so I built it with Rust.");
+                ui.add_space(4.0);
+                ui.label("gitr (r = Rust) brings together the visual tree of gitg and the quick accessibility of gitk, making it easy to browse your repository and check file diffs at a glance.");
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new("Fully open source.").strong().size(12.0).color(Color32::from_rgb(0xa6, 0xe3, 0xa1)));
+                ui.add_space(4.0);
+                ui.hyperlink_to("GitHub", "https://github.com/lahirusamishka/gitr");
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("Made with ☕ by Lahiru Samishka").size(11.0).color(config::C_SUBTEXT));
+            });
 
         if let Some(err) = &self.error {
             egui::CentralPanel::default().show(ctx, |ui| {
