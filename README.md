@@ -9,13 +9,6 @@ Runs from any git repo. See your commit graph, diffs, branches, and working tree
   <em>Commit graph with branch lanes, working tree changes, and stash</em>
 </p>
 
-<p align="center">
-  <img src="text-mode.png" alt="gitr text diff" width="395">
-  &nbsp;&nbsp;&nbsp;
-  <img src="size-by-side.png" alt="gitr side-by-side diff" width="395">
-  <br>
-  <em>Text diff view (left) and side-by-side diff view (right)</em>
-</p>
 
 ## Installation
 
