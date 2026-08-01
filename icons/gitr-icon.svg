@@ -1,0 +1,34 @@
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="round">
+      <rect x="0" y="0" width="256" height="256" rx="48" ry="48"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#round)">
+    <!-- background -->
+    <rect x="0" y="0" width="256" height="256" fill="#1e1e2e"/>
+
+    <!-- commit graph lines -->
+    <g stroke-width="9" fill="none" stroke-linecap="round">
+      <!-- lane 1 straight through -->
+      <line x1="88" y1="46" x2="88" y2="210" stroke="#89b4fa"/>
+      <!-- lane 2 branch: curves out from lane1 and back in -->
+      <path d="M 88 96 C 88 118, 170 118, 170 140" stroke="#fab387"/>
+      <path d="M 170 140 L 170 160" stroke="#fab387"/>
+      <path d="M 170 160 C 170 182, 88 182, 88 204" stroke="#fab387"/>
+    </g>
+
+    <!-- commit nodes on lane 1 -->
+    <circle cx="88" cy="46" r="13" fill="#89b4fa"/>
+    <circle cx="88" cy="96" r="13" fill="#89b4fa"/>
+    <circle cx="88" cy="204" r="13" fill="#89b4fa"/>
+
+    <!-- HEAD node (ring style, matching app's head marker) -->
+    <circle cx="88" cy="150" r="15" fill="#1e1e2e" stroke="#f38ba8" stroke-width="6"/>
+
+    <!-- commit node on branch lane -->
+    <circle cx="170" cy="140" r="12" fill="#fab387"/>
+    <circle cx="170" cy="160" r="12" fill="#fab387"/>
+  </g>
+</svg>

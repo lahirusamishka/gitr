@@ -3,12 +3,7 @@
 #   - a plain binary tarball (gitr-linux-x86_64.tar.gz)
 # to a rolling "latest" GitHub Release.
 #
-# SETUP NEEDED BEFORE THIS WORKS:
-#   1. Save this file at:  .github/workflows/release.yml
-#   2. Add an app icon at: packaging/gitr.png   (any square PNG, e.g. 256x256)
-#      (or delete the --icon-file line below and linuxdeploy will use a generic one)
-#   3. Make sure Cargo.toml's [package] name = "gitr" matches BIN_NAME below.
-#   4. No extra secrets needed — GITHUB_TOKEN is provided automatically.
+# No extra setup or secrets needed — GITHUB_TOKEN is provided automatically.
 
 name: release
 
@@ -39,7 +34,7 @@ jobs:
             libgtk-3-dev libssl-dev pkg-config \
             libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libxkbcommon-dev libfontconfig1-dev \
-            fuse libfuse2
+            fuse libfuse2 imagemagick
 
       - name: Build release binary
         run: cargo build --release --locked
@@ -57,7 +52,7 @@ jobs:
 
       - name: Build AppImage
         run: |
-          mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications
 
           cp target/release/${BIN_NAME} AppDir/usr/bin/
 
@@ -72,9 +67,19 @@ jobs:
           Terminal=false
           EOF
 
-          # Generate placeholder icons so linuxdeploy doesn't fail.
-          mkdir -p AppDir/usr/share/icons/hicolor/{256x256,48x48,scalable}/apps
-          python3 -c "
+          # Application icon
+          mkdir -p AppDir/usr/share/icons/hicolor/{scalable,256x256,48x48}/apps
+          if [ -f packaging/${BIN_NAME}.svg ]; then
+            cp packaging/${BIN_NAME}.svg AppDir/usr/share/icons/hicolor/scalable/apps/${BIN_NAME}.svg
+            # Convert SVG to PNG for non-scalable contexts
+            which convert &>/dev/null && convert -background none -size 256x256 packaging/${BIN_NAME}.svg \
+              AppDir/usr/share/icons/hicolor/256x256/apps/${BIN_NAME}.png && \
+            convert -background none -size 48x48 packaging/${BIN_NAME}.svg \
+              AppDir/usr/share/icons/hicolor/48x48/apps/${BIN_NAME}.png || true
+          fi
+          # Fallback: generate placeholder PNGs if ImageMagick not available
+          if [ ! -f AppDir/usr/share/icons/hicolor/256x256/apps/${BIN_NAME}.png ]; then
+            python3 -c "
 import struct, zlib
 def make_png(w, h, r, g, b):
     raw = b''
@@ -91,14 +96,18 @@ for size, name in [('256x256', 256), ('48x48', 48)]:
     with open(f'AppDir/usr/share/icons/hicolor/{size}/apps/${BIN_NAME}.png', 'wb') as f:
         f.write(make_png(name, name, 137, 180, 250))
 "
-          # linuxdeploy may look for an SVG in scalable
-          ln -sf ../256x256/apps/${BIN_NAME}.png AppDir/usr/share/icons/hicolor/scalable/apps/${BIN_NAME}.png
+          fi
           # Create the hicolor icon theme index
           cat > AppDir/usr/share/icons/hicolor/index.theme <<THEME
 [Icon Theme]
 Name=Hicolor
 Comment=Fallback icon theme
-Directories=48x48/apps;256x256/apps
+Directories=scalable/apps;48x48/apps;256x256/apps
+[scalable/apps]
+Size=48
+MinSize=16
+MaxSize=512
+Type=Scalable
 [48x48/apps]
 Size=48
 [256x256/apps]
