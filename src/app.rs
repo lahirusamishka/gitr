@@ -25,6 +25,7 @@ pub struct App {
     pub changed_files: Vec<String>,
     pub selected_file: Option<String>,
     pub file_diff: Option<String>,
+    pub selected_is_staged: bool,
     pub side_by_side: bool,
     pub show_about: bool,
     pub staged_files: Vec<String>,
@@ -46,6 +47,7 @@ impl App {
             changed_files: Vec::new(),
             selected_file: None,
             file_diff: None,
+            selected_is_staged: false,
             side_by_side: false,
             show_about: false,
             staged_files: Vec::new(),
@@ -98,7 +100,9 @@ impl App {
                     self.file_diff = None;
                     if self.selected.is_some() {
                         self.load_changed_files();
-                        self.load_diff(false);
+                        if !self.rows[0].is_working {
+                            self.load_diff(false);
+                        }
                     }
                     self.error = None;
                 }
@@ -135,7 +139,7 @@ impl App {
     fn load_file_diff(&mut self, file: &str) {
         if let Some(i) = self.selected {
             if self.rows[i].is_working {
-                let args = if self.staged_files.contains(&file.to_string()) {
+                let args = if self.selected_is_staged {
                     vec!["diff", "--cached", "--", file]
                 } else {
                     vec!["diff", "--", file]
@@ -379,6 +383,7 @@ impl eframe::App for App {
                                     .sense(Sense::click()),
                             ).on_hover_cursor(egui::CursorIcon::PointingHand);
                             if resp.clicked() {
+                                self.selected_is_staged = true;
                                 clicked = Some(file.clone());
                             }
                         }
@@ -394,6 +399,7 @@ impl eframe::App for App {
                                     .sense(Sense::click()),
                             ).on_hover_cursor(egui::CursorIcon::PointingHand);
                             if resp.clicked() {
+                                self.selected_is_staged = false;
                                 clicked = Some(file.clone());
                             }
                         }
@@ -408,9 +414,10 @@ impl eframe::App for App {
                             egui::Label::new(egui::RichText::new(format!("  {file}")).color(color).font(file_font.clone()))
                                 .sense(Sense::click()),
                         ).on_hover_cursor(egui::CursorIcon::PointingHand);
-                        if resp.clicked() {
-                            clicked = Some(file.clone());
-                        }
+                            if resp.clicked() {
+                                self.selected_is_staged = false;
+                                clicked = Some(file.clone());
+                            }
                     }
                 }
                 if let Some(f) = clicked {
@@ -538,6 +545,7 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                 app.file_diff = None;
                 app.selected_file = None;
                 if app.rows[idx].is_working {
+                    app.selected_is_staged = false;
                     app.load_status();
                     let has_staged = !app.staged_files.is_empty();
                     let has_unstaged = !app.unstaged_files.is_empty();
@@ -546,9 +554,11 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                         (false, true) => "unstaged changes",
                         _ => "working tree changes",
                     }.to_string();
+                    app.load_changed_files();
+                } else {
+                    app.load_changed_files();
+                    app.load_diff(false);
                 }
-                app.load_changed_files();
-                app.load_diff(false);
             }
         }
 
