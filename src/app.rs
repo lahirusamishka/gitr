@@ -41,7 +41,35 @@ impl App {
         let watch_flag = needs_reload.clone();
         let watch_path = repo_path.clone();
         std::thread::spawn(move || {
-            let mut last = String::new();
+            let mut last_status = String::new();
+            let refs_dir = format!("{watch_path}/.git/refs");
+            let mut last_ref_times: Vec<(String, std::time::SystemTime)> = Vec::new();
+            let scan_refs = |times: &mut Vec<(String, std::time::SystemTime)>| {
+                let mut changed = false;
+                let mut found = Vec::new();
+                if let Ok(entries) = std::fs::read_dir(&refs_dir) {
+                    for e in entries.flatten() {
+                        let path = e.path();
+                        if path.is_dir() {
+                            if let Ok(sub) = std::fs::read_dir(&path) {
+                                for f in sub.flatten() {
+                                    if let Ok(meta) = f.metadata() {
+                                        if let Ok(m) = meta.modified() {
+                                            let s = f.path().to_string_lossy().to_string();
+                                            found.push((s.clone(), m));
+                                            if !times.iter().any(|(p, t)| p == &s && t == &m) {
+                                                changed = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                *times = found;
+                changed
+            };
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 if let Ok(out) = std::process::Command::new("git")
@@ -50,10 +78,13 @@ impl App {
                     .output()
                 {
                     let cur = String::from_utf8_lossy(&out.stdout).to_string();
-                    if cur != last {
+                    if cur != last_status {
                         watch_flag.store(true, std::sync::atomic::Ordering::SeqCst);
-                        last = cur;
+                        last_status = cur;
                     }
+                }
+                if scan_refs(&mut last_ref_times) {
+                    watch_flag.store(true, std::sync::atomic::Ordering::SeqCst);
                 }
             }
         });
