@@ -1,4 +1,6 @@
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use eframe::egui;
 use egui::{
@@ -30,10 +32,31 @@ pub struct App {
     pub show_about: bool,
     pub staged_files: Vec<String>,
     pub unstaged_files: Vec<String>,
+    pub needs_reload: Arc<AtomicBool>,
 }
 
 impl App {
     pub fn new(repo_path: String, limit: usize, all_refs: bool) -> Self {
+        let needs_reload = Arc::new(AtomicBool::new(false));
+        let watch_flag = needs_reload.clone();
+        let watch_path = repo_path.clone();
+        std::thread::spawn(move || {
+            let mut last = String::new();
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                if let Ok(out) = std::process::Command::new("git")
+                    .current_dir(&watch_path)
+                    .args(&["status", "--porcelain"])
+                    .output()
+                {
+                    let cur = String::from_utf8_lossy(&out.stdout).to_string();
+                    if cur != last {
+                        watch_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                        last = cur;
+                    }
+                }
+            }
+        });
         let mut app = App {
             repo_path,
             rows: Vec::new(),
@@ -52,6 +75,7 @@ impl App {
             show_about: false,
             staged_files: Vec::new(),
             unstaged_files: Vec::new(),
+            needs_reload,
         };
         app.reload();
         app
@@ -243,6 +267,10 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.needs_reload.swap(false, Ordering::SeqCst) {
+            self.reload();
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(500));
         if ctx.input(|i| i.key_pressed(egui::Key::Q) && i.modifiers.ctrl) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
