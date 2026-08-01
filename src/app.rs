@@ -34,6 +34,10 @@ pub struct App {
     pub staged_files: Vec<String>,
     pub unstaged_files: Vec<String>,
     pub needs_reload: Arc<AtomicBool>,
+    pub diff_loading: Arc<AtomicBool>,
+    pub file_diff_loading: Arc<AtomicBool>,
+    pub pending_diff: Arc<std::sync::Mutex<Option<String>>>,
+    pub pending_file_diff: Arc<std::sync::Mutex<Option<(String, String, bool)>>>,
     pub context_branch: Option<String>,
     pub show_rename: bool,
     pub rename_old: String,
@@ -126,6 +130,10 @@ impl App {
             staged_files: Vec::new(),
             unstaged_files: Vec::new(),
             needs_reload,
+            diff_loading: Arc::new(AtomicBool::new(false)),
+            file_diff_loading: Arc::new(AtomicBool::new(false)),
+            pending_diff: Arc::new(std::sync::Mutex::new(None)),
+            pending_file_diff: Arc::new(std::sync::Mutex::new(None)),
             context_branch: None,
             show_rename: false,
             rename_old: String::new(),
@@ -255,31 +263,31 @@ impl App {
 
     fn load_file_diff(&mut self, file: &str) {
         if let Some(i) = self.selected {
-            if self.rows[i].is_working {
-                let args = if self.selected_is_staged {
-                    vec!["diff", "--cached", "--", file]
+            self.file_diff_loading.store(true, Ordering::SeqCst);
+            self.file_diff = None;
+            let repo = self.repo_path.clone();
+            let f = file.to_string();
+            let pending = self.pending_file_diff.clone();
+            let is_staged = self.selected_is_staged;
+            let is_working = self.rows[i].is_working;
+            let oid = self.rows[i].oid.to_string();
+            std::thread::spawn(move || {
+                let args: Vec<String> = if is_working {
+                    if is_staged {
+                        vec!["diff".into(), "--cached".into(), "--".into(), f.clone()]
+                    } else {
+                        vec!["diff".into(), "--".into(), f.clone()]
+                    }
                 } else {
-                    vec!["diff", "--", file]
+                    vec!["show".into(), oid, "--".into(), f.clone()]
                 };
-                if let Ok(out) = Command::new("git")
-                    .current_dir(&self.repo_path)
-                    .args(&args)
-                    .output()
-                {
-                    self.file_diff = Some(String::from_utf8_lossy(&out.stdout).to_string());
-                    self.selected_file = Some(file.to_string());
-                }
-                return;
-            }
-            let hash = self.rows[i].oid.to_string();
-            if let Ok(out) = Command::new("git")
-                .current_dir(&self.repo_path)
-                .args(&["show", &hash, "--", file])
-                .output()
-            {
-                self.file_diff = Some(String::from_utf8_lossy(&out.stdout).to_string());
-                self.selected_file = Some(file.to_string());
-            }
+                let out = std::process::Command::new("git").current_dir(&repo).args(&args).output();
+                let diff = match out {
+                    Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
+                    Err(e) => format!("failed: {e}"),
+                };
+                *pending.lock().unwrap() = Some((f, diff, is_staged));
+            });
         }
     }
 
@@ -360,10 +368,24 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(text) = self.pending_diff.lock().unwrap().take() {
+            self.diff_text = Some(text);
+            self.diff_loading.store(false, Ordering::SeqCst);
+        }
+        if let Some((file, diff, staged)) = self.pending_file_diff.lock().unwrap().take() {
+            self.file_diff = Some(diff);
+            self.selected_file = Some(file);
+            self.selected_is_staged = staged;
+            self.file_diff_loading.store(false, Ordering::SeqCst);
+        }
         if self.needs_reload.swap(false, Ordering::SeqCst) {
             self.reload();
         }
-        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+        if self.diff_loading.load(Ordering::SeqCst) || self.file_diff_loading.load(Ordering::SeqCst) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        } else {
+            ctx.request_repaint_after(std::time::Duration::from_millis(1000));
+        }
         if ctx.input(|i| (i.key_pressed(egui::Key::Q) || i.key_pressed(egui::Key::C)) && i.modifiers.ctrl)
             || ctx.input(|i| i.key_pressed(egui::Key::Escape))
         {
@@ -680,6 +702,14 @@ fn draw_details(app: &mut App, ui: &mut egui::Ui) {
             ui.label("no commit selected");
             return;
         };
+        if app.diff_loading.load(Ordering::SeqCst) || app.file_diff_loading.load(Ordering::SeqCst) {
+            ui.add_space(20.0);
+            ui.horizontal(|ui| {
+                ui.add(egui::Spinner::new());
+                ui.label("Loading diff…");
+            });
+            return;
+        }
         let row_info = {
             let row = &app.rows[i];
             (
@@ -799,7 +829,19 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                     app.load_changed_files();
                 } else {
                     app.load_changed_files();
-                    app.load_diff(false);
+                    app.diff_loading.store(true, Ordering::SeqCst);
+                    app.diff_text = None;
+                    let repo = app.repo_path.clone();
+                    let hash = app.rows[idx].oid.to_string();
+                    let pending = app.pending_diff.clone();
+                    std::thread::spawn(move || {
+                        let out = std::process::Command::new("git").current_dir(&repo).args(&["show", &hash]).output();
+                        let text = match out {
+                            Ok(o) => Some(String::from_utf8_lossy(&o.stdout).to_string()),
+                            Err(e) => Some(format!("failed to run git show: {e}")),
+                        };
+                        *pending.lock().unwrap() = text;
+                    });
                 }
             }
         }
