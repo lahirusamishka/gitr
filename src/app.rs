@@ -34,6 +34,12 @@ pub struct App {
     pub staged_files: Vec<String>,
     pub unstaged_files: Vec<String>,
     pub needs_reload: Arc<AtomicBool>,
+    pub context_branch: Option<String>,
+    pub show_rename: bool,
+    pub rename_old: String,
+    pub rename_new: String,
+    pub confirm_delete: Option<String>,
+    pub confirm_checkout: Option<String>,
 }
 
 impl App {
@@ -119,6 +125,12 @@ impl App {
             staged_files: Vec::new(),
             unstaged_files: Vec::new(),
             needs_reload,
+            context_branch: None,
+            show_rename: false,
+            rename_old: String::new(),
+            rename_new: String::new(),
+            confirm_delete: None,
+            confirm_checkout: None,
         };
         app.reload();
         app
@@ -157,6 +169,39 @@ impl App {
                                 tags: Vec::new(),
                                 is_head: false,
                                 is_working: true,
+                                is_stash: false,
+                            });
+                        }
+                    }
+                    if let Ok(out) = Command::new("git").current_dir(&self.repo_path).args(&["stash", "list", "--format=%gd|%H|%s"]).output() {
+                        let text = String::from_utf8_lossy(&out.stdout);
+                        for line in text.lines() {
+                            let parts: Vec<&str> = line.splitn(3, '|').collect();
+                            if parts.len() < 2 { continue; }
+                            let stash_ref = parts[0].to_string();
+                            let stash_oid = parts[1];
+                            let msg = parts.get(2).unwrap_or(&"").to_string();
+                            let parent_oid = String::from_utf8_lossy(
+                                &Command::new("git").current_dir(&self.repo_path).args(&["rev-parse", &format!("{stash_oid}^")]).output().map(|o| o.stdout).unwrap_or_default()
+                            ).trim().to_string();
+                            let parent_lane = rows.iter().find(|r| r.oid.to_string() == parent_oid).map(|r| r.lane).unwrap_or(0);
+                            let stash_lane = rows.iter().map(|r| r.lane).max().unwrap_or(0) + 1;
+                            rows.insert(1, commit::CommitRow {
+                                oid: git2::Oid::from_str(stash_oid).unwrap_or(git2::Oid::zero()),
+                                short: stash_ref.clone(),
+                                lane: stash_lane,
+                                passthrough: Vec::new(),
+                                parent_lanes: vec![parent_lane],
+                                author: String::new(),
+                                email: String::new(),
+                                time: 0,
+                                offset_min: 0,
+                                summary: msg,
+                                branches: vec![stash_ref],
+                                tags: Vec::new(),
+                                is_head: false,
+                                is_working: false,
+                                is_stash: true,
                             });
                         }
                     }
@@ -714,7 +759,10 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
 
         for (i, row) in app.rows.iter().enumerate() {
             let center = Pos2::new(x_lane(row.lane), y_center(i));
-            if row.is_working {
+            if row.is_stash {
+                painter.circle_filled(center, config::NODE_RADIUS + 1.5, Color32::from_rgb(0x1e, 0x1e, 0x2e));
+                painter.circle_stroke(center, config::NODE_RADIUS, Stroke::new(2.2_f32, Color32::from_rgb(0xcb, 0xa6, 0xf7)));
+            } else if row.is_working {
                 let node_color = if !app.staged_files.is_empty() && app.unstaged_files.is_empty() {
                     Color32::from_rgb(0xf9, 0xe2, 0xaf)
                 } else if app.staged_files.is_empty() && !app.unstaged_files.is_empty() {
@@ -734,6 +782,38 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                 }
             }
         }
+
+        response.context_menu(|ui| {
+            if let Some(branch) = &app.context_branch.clone() {
+                let is_stash = branch.starts_with("stash@{");
+                ui.set_min_width(200.0);
+                let label_color = if is_stash { Color32::from_rgb(0xcb, 0xa6, 0xf7) } else { Color32::from_rgb(0x89, 0xb4, 0xfa) };
+                ui.label(egui::RichText::new(branch).strong().size(12.0).color(label_color));
+                ui.separator();
+                if is_stash {
+                    if ui.button("Apply stash").clicked() {
+                        let _ = std::process::Command::new("git").current_dir(&app.repo_path).args(&["stash", "apply", branch]).output();
+                        app.reload();
+                    }
+                    if ui.button("Drop stash").clicked() {
+                        let _ = std::process::Command::new("git").current_dir(&app.repo_path).args(&["stash", "drop", branch]).output();
+                        app.reload();
+                    }
+                } else {
+                    if ui.button("Checkout").clicked() {
+                        app.confirm_checkout = Some(branch.clone());
+                    }
+                    if ui.button("Rename branch…").clicked() {
+                        app.rename_old = branch.clone();
+                        app.rename_new = branch.clone();
+                        app.show_rename = true;
+                    }
+                    if ui.button("Delete branch").clicked() {
+                        app.confirm_delete = Some(branch.clone());
+                    }
+                }
+            }
+        });
 
         for (i, row) in app.rows.iter().enumerate() {
             let yc = y_center(i);
@@ -757,15 +837,26 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
             for b in &row.branches {
                 if tx >= cap_x { break; }
                 let is_current = b == &app.current_branch;
-                let bg = if is_current { Color32::from_rgb(0xa6, 0xe3, 0xa1) } else { Color32::from_rgb(0x89, 0xb4, 0xfa) };
+                let bg = if row.is_stash {
+                    Color32::from_rgb(0xcb, 0xa6, 0xf7)
+                } else if is_current { Color32::from_rgb(0xa6, 0xe3, 0xa1) } else { Color32::from_rgb(0x89, 0xb4, 0xfa) };
+                let pill_start = tx;
                 tx = draw_pill(&painter, tx, yc, b, Color32::from_rgb(0x1e, 0x1e, 0x2e), bg);
+                if let Some(pos) = response.hover_pos() {
+                    let row_top = origin.y + i as f32 * config::ROW_HEIGHT;
+                    if pos.y >= row_top && pos.y < row_top + config::ROW_HEIGHT && pos.x >= pill_start && pos.x < tx {
+                        app.context_branch = Some(b.clone());
+                    }
+                }
             }
             for t in &row.tags {
                 if tx >= cap_x { break; }
                 tx = draw_pill(&painter, tx, yc, t, Color32::from_rgb(0x1e, 0x1e, 0x2e), Color32::from_rgb(0xfa, 0xb3, 0x87));
             }
 
-            let msg_color = if row.is_working {
+            let msg_color = if row.is_stash {
+                Color32::from_rgb(0xcb, 0xa6, 0xf7)
+            } else if row.is_working {
                 if !app.staged_files.is_empty() && app.unstaged_files.is_empty() {
                     Color32::from_rgb(0xf9, 0xe2, 0xaf)
                 } else if app.staged_files.is_empty() && !app.unstaged_files.is_empty() {

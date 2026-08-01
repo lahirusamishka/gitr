@@ -18,6 +18,7 @@ pub struct CommitRow {
     pub tags: Vec<String>,
     pub is_head: bool,
     pub is_working: bool,
+    pub is_stash: bool,
 }
 
 fn collect_decorations(
@@ -156,6 +157,7 @@ pub fn build_rows(repo: &Repository, limit: usize, all_refs: bool) -> Result<Vec
             tags: tag_map.get(&oid).cloned().unwrap_or_default(),
             is_head: head_oid == Some(oid),
             is_working: false,
+            is_stash: false,
         });
     }
 
