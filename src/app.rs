@@ -1,4 +1,5 @@
 use std::io::{Read, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -19,7 +20,7 @@ pub enum UpdateState {
     Idle,
     Checking,
     Available { version: String, url: String, notes: String },
-    Downloading { downloaded: u64, total: u64 },
+    Downloading,
     Ready { path: String },
     Failed(String),
     UpToDate,
@@ -59,6 +60,7 @@ pub struct App {
     pub confirm_checkout: Option<String>,
     pub update_state: UpdateState,
     pub pending_update: Arc<std::sync::Mutex<Option<UpdateState>>>,
+    pub dl_progress: Option<(Arc<std::sync::Mutex<u64>>, Arc<std::sync::Mutex<u64>>)>,
 }
 
 impl App {
@@ -158,6 +160,7 @@ impl App {
             confirm_checkout: None,
             update_state: UpdateState::Idle,
             pending_update: Arc::new(std::sync::Mutex::new(None)),
+            dl_progress: None,
         };
         app
     }
@@ -648,7 +651,6 @@ impl eframe::App for App {
                 let v = version.clone();
                 let u = url.clone();
                 let n = notes.clone();
-                let mut close = false;
                 egui::Window::new("Update Available")
                     .collapsible(false)
                     .resizable(false)
@@ -664,14 +666,13 @@ impl eframe::App for App {
                             if ui.button("Download & Install").clicked() {
                                 let pending = self.pending_update.clone();
                                 let dl_url = u.clone();
-                                let exe = std::env::current_exe().ok().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-                                let is_appimage = exe.contains(".AppImage");
-                                let dest = if is_appimage { exe } else { format!("{exe}.new") };
+                                let dest = std::env::temp_dir().join("gitr-update").to_string_lossy().to_string();
                                 let dl = Arc::new(std::sync::Mutex::new(0u64));
                                 let dt = Arc::new(std::sync::Mutex::new(0u64));
                                 let dl2 = dl.clone();
                                 let dt2 = dt.clone();
                                 let d = dest.clone();
+                                self.dl_progress = Some((dl.clone(), dt.clone()));
                                 std::thread::spawn(move || {
                                     match download_update(&dl_url, &d, &dl2, &dt2) {
                                         Ok(()) => {
@@ -682,19 +683,18 @@ impl eframe::App for App {
                                         }
                                     }
                                 });
-                                self.update_state = UpdateState::Downloading { downloaded: 0, total: 0 };
-                                close = true;
+                                self.update_state = UpdateState::Downloading;
                             }
                             if ui.button("Later").clicked() {
                                 self.update_state = UpdateState::Idle;
                             }
                         });
                     });
-                if close { self.update_state = UpdateState::Idle; }
             }
-            UpdateState::Downloading { downloaded, total } => {
-                let d = *downloaded;
-                let t = *total;
+            UpdateState::Downloading { .. } => {
+                let (d, t) = self.dl_progress.as_ref().map(|(dl, dt)| {
+                    (*dl.lock().unwrap(), *dt.lock().unwrap())
+                }).unwrap_or((0, 0));
                 egui::Window::new("Downloading")
                     .collapsible(false)
                     .resizable(false)
@@ -710,38 +710,52 @@ impl eframe::App for App {
             UpdateState::Ready { path } => {
                 let p = path.clone();
                 let mut close = false;
+                let mut install_failed = false;
                 egui::Window::new("Update Ready")
                     .collapsible(false)
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                     .show(ctx, |ui| {
-                        ui.label("Download complete. Replace binary?");
+                        ui.label("Download complete.");
                         ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            if ui.button("Replace & Restart").clicked() {
-                                let exe = std::env::current_exe().ok().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-                                let is_appimage = exe.contains(".AppImage");
-                                let ok = if is_appimage {
-                                    // AppImage: rename old, move new into place
-                                    let backup = format!("{exe}.bak");
-                                    let _ = std::fs::rename(&exe, &backup);
-                                    std::fs::rename(&p, &exe).is_ok() || std::fs::copy(&p, &exe).is_ok()
-                                } else {
-                                    std::fs::rename(&p, &exe).is_ok() || std::fs::copy(&p, &exe).is_ok()
-                                };
-                                if ok {
-                                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                                } else {
-                                    self.update_state = UpdateState::Failed("Permission denied. Try manually:".into());
+                        let exe = std::env::current_exe().ok().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+                        let is_appimage = exe.contains(".AppImage");
+                        let file_size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+                        if file_size == 0 {
+                            ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), "Downloaded file is empty or missing.");
+                        }
+                        if ui.button("Replace & Restart").clicked() {
+                            let replaced = if file_size == 0 { false } else {
+                                // Use copy always (rename fails across filesystems e.g. /tmp -> /usr)
+                                let backup = format!("{exe}.bak");
+                                let _ = std::fs::copy(&exe, &backup);
+                                let result = std::fs::copy(&p, &exe);
+                                if result.is_ok() {
+                                    let _ = std::fs::remove_file(&backup);
                                 }
+                                result.is_ok()
+                            };
+                            if replaced {
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                 close = true;
+                            } else {
+                                install_failed = true;
                             }
-                            if ui.button("Cancel").clicked() {
-                                let _ = std::fs::remove_file(&p);
-                                self.update_state = UpdateState::Idle;
-                                close = true;
+                        }
+                        if install_failed {
+                            ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), "Could not replace the binary.");
+                            ui.add_space(2.0);
+                            ui.label("Run this in your terminal:");
+                            ui.monospace(format!("sudo cp {p} {exe}"));
+                            if is_appimage {
+                                let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755));
                             }
-                        });
+                        }
+                        if ui.button("Cancel").clicked() {
+                            let _ = std::fs::remove_file(&p);
+                            self.update_state = UpdateState::Idle;
+                            close = true;
+                        }
                     });
                 if close { self.update_state = UpdateState::Idle; }
             }
