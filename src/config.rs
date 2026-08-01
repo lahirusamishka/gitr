@@ -16,6 +16,7 @@ pub const LINE_WIDTH: f32 = 2.0;
 pub const GRAPH_PAD_LEFT: f32 = 12.0;
 pub const GRAPH_PAD_RIGHT: f32 = 16.0;
 
+
 pub const COL_AUTHOR: f32 = 130.0;
 pub const COL_DATE: f32 = 140.0;
 pub const COL_HASH: f32 = 85.0;
