@@ -1,5 +1,4 @@
 use std::io::{Read, Write};
-use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -728,29 +727,24 @@ impl eframe::App for App {
                             ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), "Downloaded file is empty or missing.");
                         }
                         if ui.button("Replace & Restart").clicked() {
-                            let mut err_msg = String::new();
                             let replaced = if file_size == 0 { false } else {
-                                if is_appimage {
-                                    let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755));
+                                // Use `cp` via Command (matches what works in the terminal)
+                                let status = std::process::Command::new("cp")
+                                    .args(&[&p, &exe])
+                                    .status();
+                                let copied = status.map(|s| s.success()).unwrap_or(false);
+                                if copied {
+                                    let _ = std::process::Command::new("chmod")
+                                        .args(&["+x", &exe])
+                                        .status();
                                 }
-                                // Remove old file first, then copy (handles permission/resource conflicts)
-                                let _ = std::fs::remove_file(&exe);
-                                match std::fs::copy(&p, &exe) {
-                                    Ok(_) => true,
-                                    Err(e) => {
-                                        err_msg = format!("{e}");
-                                        false
-                                    }
-                                }
+                                copied
                             };
                             if replaced {
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                 close = true;
                             } else {
                                 self.replace_failed = true;
-                                if !err_msg.is_empty() {
-                                    ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), &err_msg);
-                                }
                             }
                         }
                         if self.replace_failed {
