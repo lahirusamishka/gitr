@@ -907,8 +907,17 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                         app.reload();
                     }
                 } else {
-                    if ui.button("Checkout").clicked() {
-                        app.confirm_checkout = Some(branch.clone());
+                    let is_remote = branch.contains('/');
+                    if is_remote {
+                        if ui.button("Checkout as local branch").clicked() {
+                            let local = branch.split('/').last().unwrap_or(branch);
+                            let _ = std::process::Command::new("git").current_dir(&app.repo_path).args(&["checkout", "-b", local, branch]).output();
+                            app.reload();
+                        }
+                    } else {
+                        if ui.button("Checkout").clicked() {
+                            app.confirm_checkout = Some(branch.clone());
+                        }
                     }
                     if ui.button("Rename branch…").clicked() {
                         app.rename_old = branch.clone();
@@ -944,13 +953,9 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
             for b in &row.branches {
                 if tx >= cap_x { break; }
                 let is_current = b == &app.current_branch;
-<<<<<<< Updated upstream
                 let bg = if row.is_stash {
                     Color32::from_rgb(0xcb, 0xa6, 0xf7)
                 } else if is_current { Color32::from_rgb(0xa6, 0xe3, 0xa1) } else { Color32::from_rgb(0x89, 0xb4, 0xfa) };
-=======
-                let bg = if is_current { Color32::from_rgb(0xa6, 0xe3, 0xa1) } else { Color32::from_rgb(0x89, 0xb4, 0xfa) };
->>>>>>> Stashed changes
                 let pill_start = tx;
                 tx = draw_pill(&painter, tx, yc, b, Color32::from_rgb(0x1e, 0x1e, 0x2e), bg);
                 if let Some(pos) = response.hover_pos() {
