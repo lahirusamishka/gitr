@@ -712,8 +712,10 @@ impl eframe::App for App {
             UpdateState::Ready { path } => {
                 let p = path.clone();
                 let mut close = false;
-                let exe = std::env::current_exe().ok().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-                let is_appimage = exe.contains(".AppImage");
+                let exe = std::env::var("APPIMAGE").ok()
+                    .or_else(|| std::env::current_exe().ok().map(|p| p.to_string_lossy().to_string()))
+                    .unwrap_or_default();
+                let is_appimage = std::env::var("APPIMAGE").is_ok();
                 egui::Window::new("Update Ready")
                     .collapsible(false)
                     .resizable(false)

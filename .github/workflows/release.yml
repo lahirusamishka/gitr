@@ -39,6 +39,13 @@ jobs:
             libxkbcommon-dev libfontconfig1-dev \
             fuse libfuse2 imagemagick
 
+      - name: Sync version from tag
+        run: |
+          TAG="${{ github.ref_name }}"
+          VER="${TAG#v}"
+          echo "Setting version to $VER"
+          sed -i "s/^version = .*/version = \"$VER\"/" Cargo.toml
+
       - name: Build release binary
         run: cargo build --release --locked
 
