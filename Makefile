@@ -13,16 +13,16 @@ install:
 		mkdir -p $(HOME)/.local/share/applications; \
 		mkdir -p $(HOME)/.local/share/icons/hicolor/scalable/apps; \
 		cp packaging/gitr.svg $(HOME)/.local/share/icons/hicolor/scalable/apps/ || true; \
-		cat > $(HOME)/.local/share/applications/gitr.desktop <<- EOF; \
-		[Desktop Entry] \
-		Type=Application \
-		Name=gitr \
-		Comment=Compact git commit graph viewer \
-		Exec=/usr/local/bin/gitr \
-		Icon=gitr \
-		Categories=Development; \
-		Terminal=false \
-		EOF \
+		printf '%s\n' \
+			'[Desktop Entry]' \
+			'Type=Application' \
+			'Name=gitr' \
+			'Comment=Compact git commit graph viewer' \
+			'Exec=/usr/local/bin/gitr' \
+			'Icon=gitr' \
+			'Categories=Development;' \
+			'Terminal=false' \
+			> $(HOME)/.local/share/applications/gitr.desktop; \
 		xdg-desktop-menu forceupdate 2>/dev/null || true; \
 	fi
 	@echo "Installed. Run 'gitr' from your terminal."
