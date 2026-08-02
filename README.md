@@ -168,6 +168,6 @@ Fully open source.
 
 If you find this useful:
 
-<a href="https://buymeacoffee.com/lahirusamishka">
+<a href="https://buymeacoffee.com/lahirusamishka" target="_blank">
   <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" height="48" alt="Buy me a coffee">
 </a>
