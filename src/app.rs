@@ -64,13 +64,16 @@ pub struct App {
     pub dl_progress: Option<(Arc<std::sync::Mutex<u64>>, Arc<std::sync::Mutex<u64>>)>,
     pub replace_failed: bool,
     pub checked_update: bool,
+    pub shutdown: Arc<AtomicBool>,
 }
 
 impl App {
     pub fn new(repo_path: String, limit: usize, all_refs: bool) -> Self {
         let needs_reload = Arc::new(AtomicBool::new(false));
+        let shutdown = Arc::new(AtomicBool::new(false));
         let watch_flag = needs_reload.clone();
         let watch_path = repo_path.clone();
+        let watch_shutdown = shutdown.clone();
         std::thread::spawn(move || {
             let mut last_status = String::new();
             let head_path = format!("{watch_path}/.git/HEAD");
@@ -104,6 +107,7 @@ impl App {
                 changed
             };
             loop {
+                if watch_shutdown.load(Ordering::Relaxed) { return; }
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 if let Ok(out) = std::process::Command::new("git")
                     .current_dir(&watch_path)
@@ -168,6 +172,7 @@ impl App {
             dl_progress: None,
             replace_failed: false,
             checked_update: false,
+            shutdown,
         };
         app
     }
@@ -392,6 +397,12 @@ impl App {
     }
 }
 
+impl Drop for App {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+    }
+}
+
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_visuals(egui::Visuals::dark());
@@ -446,6 +457,7 @@ impl eframe::App for App {
         if ctx.input(|i| (i.key_pressed(egui::Key::Q) || i.key_pressed(egui::Key::C)) && i.modifiers.ctrl)
             || ctx.input(|i| i.key_pressed(egui::Key::Escape))
         {
+            self.shutdown.store(true, Ordering::SeqCst);
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         if ctx.input(|i| i.key_pressed(egui::Key::R) && i.modifiers.ctrl) {
@@ -460,6 +472,7 @@ impl eframe::App for App {
                     }
                     ui.separator();
                     if ui.add(egui::Button::new("Exit").shortcut_text("Ctrl+Q")).clicked() {
+                        self.shutdown.store(true, Ordering::SeqCst);
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
@@ -771,6 +784,7 @@ impl eframe::App for App {
                                     ok
                                 };
                                 if replaced {
+                                    self.shutdown.store(true, Ordering::SeqCst);
                                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                     close = true;
                                 } else {
