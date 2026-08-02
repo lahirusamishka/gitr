@@ -63,6 +63,7 @@ pub struct App {
     pub pending_update: Arc<std::sync::Mutex<Option<UpdateState>>>,
     pub dl_progress: Option<(Arc<std::sync::Mutex<u64>>, Arc<std::sync::Mutex<u64>>)>,
     pub replace_failed: bool,
+    pub checked_update: bool,
 }
 
 impl App {
@@ -166,6 +167,7 @@ impl App {
             pending_update: Arc::new(std::sync::Mutex::new(None)),
             dl_progress: None,
             replace_failed: false,
+            checked_update: false,
         };
         app
     }
@@ -409,6 +411,19 @@ impl eframe::App for App {
             self.reload();
             self.initial_load = false;
             return;
+        }
+        if !self.checked_update {
+            self.checked_update = true;
+            let repo = config::REPO.to_string();
+            let current = config::VERSION.to_string();
+            let pending = self.pending_update.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(2000));
+                let result = check_update(&repo, &current);
+                if matches!(result, UpdateState::Available { .. }) {
+                    *pending.lock().unwrap() = Some(result);
+                }
+            });
         }
         if let Some(text) = self.pending_diff.lock().unwrap().take() {
             self.diff_text = Some(text);
@@ -662,15 +677,17 @@ impl eframe::App for App {
                     .collapsible(false)
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .default_width(400.0)
                     .show(ctx, |ui| {
-                        ui.label(egui::RichText::new(format!("gitr v{v}")).strong().size(16.0).color(Color32::from_rgb(0xa6, 0xe3, 0xa1)));
-                        ui.add_space(4.0);
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new(format!("gitr v{v}")).strong().size(18.0).color(Color32::from_rgb(0xa6, 0xe3, 0xa1)));
+                        ui.add_space(8.0);
                         if !n.is_empty() {
                             ui.add(egui::Label::new(&n).wrap());
-                            ui.add_space(4.0);
+                            ui.add_space(8.0);
                         }
                         ui.horizontal(|ui| {
-                            if ui.button("Download & Install").clicked() {
+                            if ui.add_sized([160.0, 32.0], egui::Button::new("Download & Install")).clicked() {
                                 let pending = self.pending_update.clone();
                                 let dl_url = u.clone();
                                 let dest = std::env::temp_dir().join("gitr-update").to_string_lossy().to_string();
@@ -692,10 +709,11 @@ impl eframe::App for App {
                                 });
                                 self.update_state = UpdateState::Downloading;
                             }
-                            if ui.button("Later").clicked() {
+                            if ui.add_sized([100.0, 32.0], egui::Button::new("Later")).clicked() {
                                 self.update_state = UpdateState::Idle;
                             }
                         });
+                        ui.add_space(8.0);
                     });
             }
             UpdateState::Downloading { .. } => {
@@ -724,40 +742,50 @@ impl eframe::App for App {
                     .collapsible(false)
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .default_width(400.0)
                     .show(ctx, |ui| {
-                        ui.label("Download complete.");
-                        ui.add_space(4.0);
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new("Download complete").strong().size(16.0).color(Color32::from_rgb(0xa6, 0xe3, 0xa1)));
+                        ui.add_space(8.0);
                         let file_size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
                         if file_size == 0 {
                             ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), "Downloaded file is empty or missing.");
+                            ui.add_space(4.0);
                         }
-                        if ui.button("Replace & Restart").clicked() {
-                            let replaced = if file_size == 0 { false } else {
-                                // Remove old file first to avoid "Text file busy"
-                                let _ = std::process::Command::new("rm")
-                                    .args(&["-f", &exe])
-                                    .status();
-                                // Then copy new file into place
-                                let ok = std::process::Command::new("cp")
-                                    .args(&[&p, &exe])
-                                    .status()
-                                    .map(|s| s.success())
-                                    .unwrap_or(false);
-                                if ok {
-                                    let _ = std::process::Command::new("chmod")
-                                        .args(&["+x", &exe])
+                        ui.horizontal(|ui| {
+                            if ui.add_sized([200.0, 32.0], egui::Button::new("Replace & Restart")).clicked() {
+                                let replaced = if file_size == 0 { false } else {
+                                    let _ = std::process::Command::new("rm")
+                                        .args(&["-f", &exe])
                                         .status();
+                                    let ok = std::process::Command::new("cp")
+                                        .args(&[&p, &exe])
+                                        .status()
+                                        .map(|s| s.success())
+                                        .unwrap_or(false);
+                                    if ok {
+                                        let _ = std::process::Command::new("chmod")
+                                            .args(&["+x", &exe])
+                                            .status();
+                                    }
+                                    ok
+                                };
+                                if replaced {
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                                    close = true;
+                                } else {
+                                    self.replace_failed = true;
                                 }
-                                ok
-                            };
-                            if replaced {
-                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                                close = true;
-                            } else {
-                                self.replace_failed = true;
                             }
-                        }
+                            if ui.add_sized([100.0, 32.0], egui::Button::new("Cancel")).clicked() {
+                                let _ = std::fs::remove_file(&p);
+                                self.update_state = UpdateState::Idle;
+                                self.replace_failed = false;
+                                close = true;
+                            }
+                        });
                         if self.replace_failed {
+                            ui.add_space(4.0);
                             ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), "Could not replace the binary.");
                             ui.add_space(2.0);
                             ui.label("Run this in your terminal:");
@@ -765,12 +793,7 @@ impl eframe::App for App {
                             ui.add_space(2.0);
                             ui.label("Then restart gitr manually.");
                         }
-                        if ui.button("Cancel").clicked() {
-                            let _ = std::fs::remove_file(&p);
-                            self.update_state = UpdateState::Idle;
-                            self.replace_failed = false;
-                            close = true;
-                        }
+                        ui.add_space(8.0);
                     });
                 if close { self.update_state = UpdateState::Idle; }
             }
