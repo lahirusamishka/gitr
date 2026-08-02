@@ -27,7 +27,7 @@ pub const C_SEL: Color32 = Color32::from_rgba_premultiplied(0x31, 0x32, 0x44, 20
 pub const C_HOVER: Color32 = Color32::from_rgba_premultiplied(0x28, 0x28, 0x38, 120);
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const REPO: &str = "lahirusamishka/gitr";
+pub const REPO: &str = "islandspan-solutions/gitr";
 
 pub fn lane_color(lane: usize) -> Color32 {
     LANE_COLORS[lane % LANE_COLORS.len()]

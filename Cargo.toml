@@ -3,7 +3,7 @@ name = "gitr"
 version = "0.1.0"
 edition = "2021"
 description = "A compact git commit graph viewer — alternative to gitk, inspired by VS Code Git Graph"
-repository = "https://github.com/samishka/gitr"
+repository = "https://github.com/islandspan-solutions/gitr"
 license = "MIT"
 
 [dependencies]

@@ -17,7 +17,7 @@ Runs from any git repo. See your commit graph, diffs, branches, and working tree
 #### Option 1: AppImage (portable, no install)
 ```sh
 # Download
-wget -O gitr-x86_64.AppImage https://github.com/lahirusamishka/gitr/releases/latest/download/gitr-x86_64.AppImage
+wget -O gitr-x86_64.AppImage https://github.com/islandspan-solutions/gitr/releases/latest/download/gitr-x86_64.AppImage
 
 # Make executable and run
 chmod +x gitr-x86_64.AppImage
@@ -35,7 +35,7 @@ sudo mv gitr-x86_64.AppImage /usr/local/bin/gitr
 #### Option 2: Binary tarball
 ```sh
 # Download and extract
-wget -O gitr.tar.gz https://github.com/lahirusamishka/gitr/releases/latest/download/gitr-linux-x86_64.tar.gz
+wget -O gitr.tar.gz https://github.com/islandspan-solutions/gitr/releases/latest/download/gitr-linux-x86_64.tar.gz
 tar -xzf gitr.tar.gz
 
 # Install system-wide
@@ -62,7 +62,7 @@ sudo dnf install gtk3-devel openssl-devel pkg-config libxcb-devel \
 
 **Build & install:**
 ```sh
-git clone https://github.com/lahirusamishka/gitr.git
+git clone https://github.com/islandspan-solutions/gitr.git
 cd gitr
 make build && sudo make install
 # Now `gitr` works from any directory
@@ -84,7 +84,7 @@ sudo mv gitr-macos /usr/local/bin/gitr
 #### Option 2: Build from source (requires Rust)
 ```sh
 # Install Rust if you don't have it: https://rustup.rs
-git clone https://github.com/lahirusamishka/gitr.git
+git clone https://github.com/islandspan-solutions/gitr.git
 cd gitr
 cargo build --release
 sudo cp target/release/gitr /usr/local/bin/gitr
@@ -99,12 +99,12 @@ Now `gitr` works from any terminal.
 ### Windows
 
 #### Option 1: Download binary (if available from Releases)
-Download the Windows executable from the [Releases page](https://github.com/lahirusamishka/gitr/releases) and run `gitr.exe`.
+Download the Windows executable from the [Releases page](https://github.com/islandspan-solutions/gitr/releases) and run `gitr.exe`.
 
 #### Option 2: Build from source (requires Rust)
 ```powershell
 # Install Rust: https://rustup.rs
-git clone https://github.com/lahirusamishka/gitr.git
+git clone https://github.com/islandspan-solutions/gitr.git
 cd gitr
 cargo build --release
 # The binary is at target/release/gitr.exe

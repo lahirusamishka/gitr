@@ -483,13 +483,14 @@ impl eframe::App for App {
                 if !branch.is_empty() {
                     let fg = Color32::from_rgb(0xcd, 0xd6, 0xf4);
                     let bg = Color32::from_rgb(0x31, 0x32, 0x44);
-                    let galley = ui.painter().layout_no_wrap(format!(" {branch} "), FontId::proportional(12.0), fg);
-                    let w = galley.size().x + 16.0;
+                    let wtext: egui::WidgetText = egui::RichText::new(format!("  • {branch}  ")).strong().size(12.0).color(fg).into();
+                    let galley = wtext.into_galley(ui, None, f32::INFINITY, FontId::proportional(12.0));
+                    let w = galley.size().x + 12.0;
                     let h = 20.0;
                     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::hover());
                     let p = ui.painter_at(rect);
                     p.rect_filled(rect, 6.0, bg);
-                    p.galley(rect.min + egui::vec2(8.0, (h - galley.size().y) / 2.0), galley, fg);
+                    p.galley(rect.min + egui::vec2(6.0, (h - galley.size().y) / 2.0), galley, fg);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("⟳ Refresh").clicked() {
@@ -539,7 +540,7 @@ impl eframe::App for App {
                 ui.add_space(4.0);
                 ui.label(egui::RichText::new("Fully open source.").strong().size(12.0).color(Color32::from_rgb(0xa6, 0xe3, 0xa1)));
                 ui.add_space(4.0);
-                ui.hyperlink_to("GitHub", "https://github.com/lahirusamishka/gitr");
+                ui.hyperlink_to("GitHub", "https://github.com/islandspan-solutions/gitr");
                 ui.add_space(8.0);
                 ui.label(egui::RichText::new("Made with ☕ by Lahiru Samishka").size(11.0).color(config::C_SUBTEXT));
             });
@@ -1253,10 +1254,10 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                     (false, true) => ("UNSTAGED", Color32::from_rgb(0xf3, 0x8b, 0xa8)),
                     _ => ("WORKING", Color32::from_rgb(0xf9, 0xe2, 0xaf)),
                 };
-                tx = draw_pill(&painter, tx, yc, pill_label, Color32::from_rgb(0x1e, 0x1e, 0x2e), pill_bg);
+                tx = draw_pill(ui, tx, yc, pill_label, Color32::from_rgb(0x1e, 0x1e, 0x2e), pill_bg, false);
             }
             if row.is_head && tx < cap_x {
-                tx = draw_pill(&painter, tx, yc, "HEAD", Color32::from_rgb(0x1e, 0x1e, 0x2e), Color32::from_rgb(0xf3, 0x8b, 0xa8));
+                tx = draw_pill(ui, tx, yc, "HEAD", Color32::from_rgb(0x1e, 0x1e, 0x2e), Color32::from_rgb(0xf3, 0x8b, 0xa8), false);
             }
             for b in &row.branches {
                 if tx >= cap_x { break; }
@@ -1265,7 +1266,8 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                     Color32::from_rgb(0xcb, 0xa6, 0xf7)
                 } else if is_current { Color32::from_rgb(0xa6, 0xe3, 0xa1) } else { Color32::from_rgb(0x89, 0xb4, 0xfa) };
                 let pill_start = tx;
-                tx = draw_pill(&painter, tx, yc, b, Color32::from_rgb(0x1e, 0x1e, 0x2e), bg);
+                let pill_label = if is_current { format!("* {b}") } else { b.clone() };
+                tx = draw_pill(ui, tx, yc, &pill_label, Color32::from_rgb(0x1e, 0x1e, 0x2e), bg, is_current);
                 if let Some(pos) = response.hover_pos() {
                     let row_top = origin.y + i as f32 * config::ROW_HEIGHT;
                     if pos.y >= row_top && pos.y < row_top + config::ROW_HEIGHT && pos.x >= pill_start && pos.x < tx {
@@ -1277,7 +1279,7 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
             for t in &row.tags {
                 if tx >= cap_x { break; }
                 let pill_start = tx;
-                tx = draw_pill(&painter, tx, yc, t, Color32::from_rgb(0x1e, 0x1e, 0x2e), Color32::from_rgb(0xfa, 0xb3, 0x87));
+                tx = draw_pill(ui, tx, yc, t, Color32::from_rgb(0x1e, 0x1e, 0x2e), Color32::from_rgb(0xfa, 0xb3, 0x87), false);
                 if let Some(pos) = response.hover_pos() {
                     let row_top = origin.y + i as f32 * config::ROW_HEIGHT;
                     if pos.y >= row_top && pos.y < row_top + config::ROW_HEIGHT && pos.x >= pill_start && pos.x < tx {
@@ -1342,9 +1344,15 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
         let _ = PathShape::convex_polygon(vec![], Color32::TRANSPARENT, Stroke::NONE);
 }
 
-fn draw_pill(painter: &egui::Painter, x: f32, y: f32, label: &str, fg: Color32, bg: Color32) -> f32 {
-    let font = FontId::proportional(10.5);
-    let galley = painter.layout_no_wrap(label.to_string(), font, fg);
+fn draw_pill(ui: &egui::Ui, x: f32, y: f32, label: &str, fg: Color32, bg: Color32, bold: bool) -> f32 {
+    let painter = ui.painter();
+    let galley = if bold {
+        let font = FontId::proportional(12.0);
+        painter.layout_no_wrap(label.to_string(), font, fg)
+    } else {
+        let font = FontId::proportional(10.5);
+        painter.layout_no_wrap(label.to_string(), font, fg)
+    };
     let w = galley.size().x + 12.0;
     let h = 16.0;
     let rect = Rect::from_min_size(Pos2::new(x, y - h / 2.0), Vec2::new(w, h));
