@@ -8,16 +8,36 @@ fn print_help() {
     println!("Alternative to gitk, inspired by VS Code Git Graph.");
     println!("Run from any git repository root.\n");
     println!("USAGE:");
-    println!("  gitr [path] [--limit N] [--current] [--help]\n");
+    println!("  gitr [path] [--limit N] [--current] [--foreground] [--help]\n");
     println!("OPTIONS:");
-    println!("  path        repository path (default: current directory)");
-    println!("  --limit N   max commits to load (default: 1000)");
-    println!("  --current   only walk the current branch (default: all refs)");
-    println!("  --help      show this message\n");
+    println!("  path          repository path (default: current directory)");
+    println!("  --limit N     max commits to load (default: 1000)");
+    println!("  --current     only walk the current branch (default: all refs)");
+    println!("  --foreground  run in foreground (don't detach from terminal)");
+    println!("  --help        show this message\n");
     println!("CONTROLS:");
     println!("  Ctrl+Q      exit");
     println!("  Click row   select commit & show diff");
     println!("  Search      find commits by message, author, or hash");
+}
+
+fn daemonize() {
+    if cfg!(unix) && std::env::var("GITR_DETACHED").is_err() {
+        let args: Vec<String> = std::env::args().collect();
+        if let Ok(exe) = std::env::current_exe() {
+            if std::process::Command::new(&exe)
+                .args(&args[1..])
+                .env("GITR_DETACHED", "1")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .is_ok()
+            {
+                std::process::exit(0);
+            }
+        }
+    }
 }
 
 fn main() -> eframe::Result<()> {
@@ -29,6 +49,7 @@ fn main() -> eframe::Result<()> {
     let mut path = String::from(".");
     let mut limit: usize = 1000;
     let mut all_refs = true;
+    let mut foreground = false;
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -45,9 +66,14 @@ fn main() -> eframe::Result<()> {
                 }
             }
             "--current" => all_refs = false,
+            "--foreground" => foreground = true,
             other => path = other.to_string(),
         }
         i += 1;
+    }
+
+    if !foreground {
+        daemonize();
     }
 
     let options = eframe::NativeOptions {
