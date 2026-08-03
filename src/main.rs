@@ -84,6 +84,19 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "gitr",
         options,
-        Box::new(move |_cc| Ok(Box::new(app::App::new(path, limit, all_refs)))),
+        Box::new(move |cc| {
+            let mut fonts = egui::FontDefinitions::default();
+            if let Ok(data) = std::fs::read("/usr/share/fonts/noto/NotoSans-Regular.ttf") {
+                fonts.font_data.insert(
+                    "NotoSans-Regular".to_owned(),
+                    egui::FontData::from_owned(data),
+                );
+                if let Some(prop) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+                    prop.insert(0, "NotoSans-Regular".to_owned());
+                }
+            }
+            cc.egui_ctx.set_fonts(fonts);
+            Ok(Box::new(app::App::new(path, limit, all_refs)))
+        }),
     )
 }

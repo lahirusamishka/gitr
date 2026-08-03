@@ -552,9 +552,10 @@ impl eframe::App for App {
             .open(&mut self.show_about)
             .collapsible(false)
             .resizable(false)
-            .default_width(360.0)
+            .default_width(400.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
+                ui.set_min_width(400.0);
                 ui.label(egui::RichText::new("gitr").strong().size(18.0).color(Color32::from_rgb(0x89, 0xb4, 0xfa)));
                 ui.add_space(2.0);
                 ui.label(egui::RichText::new(format!("Version {}", config::VERSION)).size(12.0).color(config::C_SUBTEXT));
@@ -675,7 +676,9 @@ impl eframe::App for App {
                     .collapsible(false)
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .default_width(400.0)
                     .show(ctx, |ui| {
+                        ui.set_min_width(400.0);
                         ui.horizontal(|ui| {
                             ui.add(egui::Spinner::new());
                             ui.label("Checking for updates…");
@@ -692,6 +695,7 @@ impl eframe::App for App {
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                     .default_width(400.0)
                     .show(ctx, |ui| {
+                        ui.set_min_width(400.0);
                         ui.add_space(8.0);
                         ui.label(egui::RichText::new(format!("gitr v{v}")).strong().size(18.0).color(Color32::from_rgb(0xa6, 0xe3, 0xa1)));
                         ui.add_space(8.0);
@@ -700,7 +704,8 @@ impl eframe::App for App {
                             ui.add_space(8.0);
                         }
                         ui.horizontal(|ui| {
-                            if ui.add_sized([160.0, 32.0], egui::Button::new("Download & Install")).clicked() {
+                            let btn_w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+                            if ui.add_sized([btn_w, 32.0], egui::Button::new("Download & Install")).clicked() {
                                 let pending = self.pending_update.clone();
                                 let dl_url = u.clone();
                                 let dest = std::env::temp_dir().join("gitr-update").to_string_lossy().to_string();
@@ -722,7 +727,7 @@ impl eframe::App for App {
                                 });
                                 self.update_state = UpdateState::Downloading;
                             }
-                            if ui.add_sized([100.0, 32.0], egui::Button::new("Later")).clicked() {
+                            if ui.add_sized([btn_w, 32.0], egui::Button::new("Later")).clicked() {
                                 self.update_state = UpdateState::Idle;
                             }
                         });
@@ -737,7 +742,9 @@ impl eframe::App for App {
                     .collapsible(false)
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .default_width(400.0)
                     .show(ctx, |ui| {
+                        ui.set_min_width(400.0);
                         let pct = if t > 0 { d as f64 / t as f64 } else { 0.0 };
                         let mb_d = d as f64 / 1_048_576.0;
                         let mb_t = t as f64 / 1_048_576.0;
@@ -757,6 +764,7 @@ impl eframe::App for App {
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                     .default_width(400.0)
                     .show(ctx, |ui| {
+                        ui.set_min_width(400.0);
                         ui.add_space(8.0);
                         ui.label(egui::RichText::new("Download complete").strong().size(16.0).color(Color32::from_rgb(0xa6, 0xe3, 0xa1)));
                         ui.add_space(8.0);
@@ -766,7 +774,8 @@ impl eframe::App for App {
                             ui.add_space(4.0);
                         }
                         ui.horizontal(|ui| {
-                            if ui.add_sized([200.0, 32.0], egui::Button::new("Replace & Restart")).clicked() {
+                            let btn_w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+                            if ui.add_sized([btn_w, 32.0], egui::Button::new("Replace & Restart")).clicked() {
                                 let replaced = if file_size == 0 { false } else {
                                     let _ = std::process::Command::new("rm")
                                         .args(&["-f", &exe])
@@ -791,7 +800,7 @@ impl eframe::App for App {
                                     self.replace_failed = true;
                                 }
                             }
-                            if ui.add_sized([100.0, 32.0], egui::Button::new("Cancel")).clicked() {
+                            if ui.add_sized([btn_w, 32.0], egui::Button::new("Cancel")).clicked() {
                                 let _ = std::fs::remove_file(&p);
                                 self.update_state = UpdateState::Idle;
                                 self.replace_failed = false;
@@ -818,12 +827,14 @@ impl eframe::App for App {
                     .collapsible(false)
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .default_width(400.0)
                     .show(ctx, |ui| {
+                        ui.set_min_width(400.0);
                         ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), &m);
                         ui.add_space(4.0);
                         ui.label("Download manually:");
                         ui.hyperlink_to("GitHub Releases", format!("https://github.com/{}/releases", config::REPO));
-                        if ui.button("OK").clicked() {
+                        if ui.add_sized([ui.available_width(), 32.0], egui::Button::new("OK")).clicked() {
                             close = true;
                         }
                     });
@@ -835,9 +846,11 @@ impl eframe::App for App {
                     .collapsible(false)
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .default_width(400.0)
                     .show(ctx, |ui| {
+                        ui.set_min_width(400.0);
                         ui.label(egui::RichText::new("You're up to date ✓").color(Color32::from_rgb(0xa6, 0xe3, 0xa1)).size(14.0));
-                        if ui.button("OK").clicked() {
+                        if ui.add_sized([ui.available_width(), 32.0], egui::Button::new("OK")).clicked() {
                             close = true;
                         }
                     });
@@ -854,11 +867,14 @@ impl eframe::App for App {
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .default_width(400.0)
                 .show(ctx, |ui| {
+                    ui.set_min_width(400.0);
                     ui.label(format!("Rename \"{old}\" to:"));
-                    ui.text_edit_singleline(&mut self.rename_new);
+                    ui.add_sized([ui.available_width(), 24.0], egui::TextEdit::singleline(&mut self.rename_new));
                     ui.horizontal(|ui| {
-                        if ui.button("Rename").clicked() {
+                        let btn_w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+                        if ui.add_sized([btn_w, 32.0], egui::Button::new("Rename")).clicked() {
                             let _ = std::process::Command::new("git")
                                 .current_dir(&repo_path)
                                 .args(&["branch", "-m", &old, &self.rename_new])
@@ -866,7 +882,7 @@ impl eframe::App for App {
                             self.reload();
                             close = true;
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui.add_sized([btn_w, 32.0], egui::Button::new("Cancel")).clicked() {
                             close = true;
                         }
                     });
@@ -884,13 +900,16 @@ impl eframe::App for App {
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .default_width(400.0)
                 .show(ctx, |ui| {
+                    ui.set_min_width(400.0);
                     ui.label(format!("Delete \"{del_branch}\"?"));
                     ui.add_space(4.0);
                     ui.checkbox(&mut self.del_origin, "also delete from origin");
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Yes").clicked() {
+                        let btn_w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+                        if ui.add_sized([btn_w, 32.0], egui::Button::new("Yes")).clicked() {
                             let _ = std::process::Command::new("git").current_dir(&repo_path).args(&["branch", "-d", &del_branch]).output();
                             if self.del_origin {
                                 let _ = std::process::Command::new("git").current_dir(&repo_path).args(&["push", "origin", "--delete", &del_branch]).output();
@@ -898,7 +917,7 @@ impl eframe::App for App {
                             self.reload();
                             close = true;
                         }
-                        if ui.button("No").clicked() {
+                        if ui.add_sized([btn_w, 32.0], egui::Button::new("No")).clicked() {
                             close = true;
                         }
                     });
@@ -916,16 +935,19 @@ impl eframe::App for App {
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .default_width(400.0)
                 .show(ctx, |ui| {
+                    ui.set_min_width(400.0);
                     ui.label(format!("Delete tag \"{del_tag}\"?"));
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Yes").clicked() {
+                        let btn_w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+                        if ui.add_sized([btn_w, 32.0], egui::Button::new("Yes")).clicked() {
                             let _ = std::process::Command::new("git").current_dir(&repo_path).args(&["tag", "-d", &del_tag]).output();
                             self.reload();
                             close = true;
                         }
-                        if ui.button("No").clicked() {
+                        if ui.add_sized([btn_w, 32.0], egui::Button::new("No")).clicked() {
                             close = true;
                         }
                     });
@@ -938,41 +960,60 @@ impl eframe::App for App {
         if let Some(branch) = &self.confirm_checkout.clone() {
             let target = branch.clone();
             let repo_path = self.repo_path.clone();
-            let has_staged = !self.staged_files.is_empty();
-            let has_unstaged = !self.unstaged_files.is_empty();
-            let has_changes = has_staged || has_unstaged;
             let mut close = false;
+            let mut error_msg = String::new();
             egui::Window::new("Switch branch")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .default_width(500.0)
                 .show(ctx, |ui| {
+                    ui.set_min_width(500.0);
                     ui.label(egui::RichText::new(format!("Switch to \"{target}\"?")).strong().size(14.0));
                     ui.add_space(6.0);
-                    if has_changes {
-                        ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), "You have uncommitted changes.");
-                        ui.label("These will be stashed before switching.");
-                        ui.add_space(6.0);
-                    }
                     ui.horizontal(|ui| {
-                        if has_changes {
-                            if ui.button("Stash & Checkout").clicked() {
-                                let _ = std::process::Command::new("git").current_dir(&repo_path).args(&["stash"]).output();
-                                let _ = std::process::Command::new("git").current_dir(&repo_path).args(&["checkout", &target]).output();
-                                self.reload();
-                                close = true;
-                            }
-                        } else {
-                            if ui.button("Checkout").clicked() {
-                                let _ = std::process::Command::new("git").current_dir(&repo_path).args(&["checkout", &target]).output();
-                                self.reload();
-                                close = true;
+                        let btn_w = (ui.available_width() - ui.spacing().item_spacing.x * 2.0) / 3.0;
+                        if ui.add_sized([btn_w, 32.0], egui::Button::new("Stash & Checkout")).clicked() {
+                            let _ = std::process::Command::new("git").current_dir(&repo_path).args(&["stash"]).output();
+                            let out = std::process::Command::new("git").current_dir(&repo_path).args(&["checkout", &target]).output();
+                            match out {
+                                Ok(o) if o.status.success() => {
+                                    self.reload();
+                                    close = true;
+                                }
+                                Ok(o) => {
+                                    error_msg = String::from_utf8_lossy(&o.stderr).to_string();
+                                }
+                                Err(e) => {
+                                    error_msg = format!("{e}");
+                                }
                             }
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui.add_sized([btn_w, 32.0], egui::Button::new("Checkout")).clicked() {
+                            let out = std::process::Command::new("git")
+                                .current_dir(&repo_path)
+                                .args(&["checkout", &target])
+                                .output();
+                            match out {
+                                Ok(o) if o.status.success() => {
+                                    self.reload();
+                                    close = true;
+                                }
+                                Ok(o) => {
+                                    error_msg = String::from_utf8_lossy(&o.stderr).to_string();
+                                }
+                                Err(e) => {
+                                    error_msg = format!("{e}");
+                                }
+                            }
+                        }
+                        if ui.add_sized([btn_w, 32.0], egui::Button::new("Cancel")).clicked() {
                             close = true;
                         }
                     });
+                    if !error_msg.is_empty() {
+                        ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), &error_msg);
+                    }
                 });
             if close {
                 self.confirm_checkout = None;
@@ -1303,7 +1344,7 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                     Color32::from_rgb(0xcb, 0xa6, 0xf7)
                 } else if is_current { Color32::from_rgb(0xa6, 0xe3, 0xa1) } else { Color32::from_rgb(0x89, 0xb4, 0xfa) };
                 let pill_start = tx;
-                let pill_label = if is_current { format!("* {b}") } else { b.clone() };
+                let pill_label = format!("{b}");
                 tx = draw_pill(ui, tx, yc, &pill_label, Color32::from_rgb(0x1e, 0x1e, 0x2e), bg, is_current);
                 if let Some(pos) = response.hover_pos() {
                     let row_top = origin.y + i as f32 * config::ROW_HEIGHT;
@@ -1313,18 +1354,27 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                     }
                 }
             }
-            for t in &row.tags {
-                if tx >= cap_x { break; }
-                let pill_start = tx;
-                tx = draw_pill(ui, tx, yc, t, Color32::from_rgb(0x1e, 0x1e, 0x2e), Color32::from_rgb(0xfa, 0xb3, 0x87), false);
-                if let Some(pos) = response.hover_pos() {
-                    let row_top = origin.y + i as f32 * config::ROW_HEIGHT;
-                    if pos.y >= row_top && pos.y < row_top + config::ROW_HEIGHT && pos.x >= pill_start && pos.x < tx {
-                        app.context_tag = Some(t.clone());
-                        app.context_branch = None;
-                    }
+        for t in &row.tags {
+            if tx >= cap_x { break; }
+            let pill_start = tx;
+            tx = draw_pill(
+                ui,
+                tx,
+                yc,
+                t,
+                Color32::from_rgb(0x3a, 0x3a, 0x42), // muted dark-gray pill background
+                Color32::from_rgb(0xc8, 0xc8, 0xcf), // soft light-gray text
+                false,
+            );
+            if let Some(pos) = response.hover_pos() {
+                let row_top = origin.y + i as f32 * config::ROW_HEIGHT;
+                if pos.y >= row_top && pos.y < row_top + config::ROW_HEIGHT
+                    && pos.x >= pill_start && pos.x < tx {
+                    app.context_tag = Some(t.clone());
+                    app.context_branch = None;
                 }
             }
+        }
 
             let msg_color = if row.is_stash {
                 Color32::from_rgb(0xcb, 0xa6, 0xf7)
@@ -1384,18 +1434,18 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
 fn draw_pill(ui: &egui::Ui, x: f32, y: f32, label: &str, fg: Color32, bg: Color32, bold: bool) -> f32 {
     let painter = ui.painter();
     let galley = if bold {
-        let font = FontId::proportional(12.0);
+        let font = FontId::proportional(13.0);
         painter.layout_no_wrap(label.to_string(), font, fg)
     } else {
-        let font = FontId::proportional(10.5);
+        let font = FontId::proportional(11.5);
         painter.layout_no_wrap(label.to_string(), font, fg)
     };
-    let w = galley.size().x + 12.0;
-    let h = 16.0;
+    let w = galley.size().x + 13.0;
+    let h = 18.0;
     let rect = Rect::from_min_size(Pos2::new(x, y - h / 2.0), Vec2::new(w, h));
-    painter.rect_filled(rect, 8.0, bg);
+    painter.rect_filled(rect, 2.0, bg);
     painter.galley(rect.min + Vec2::new(6.0, (h - galley.size().y) / 2.0), galley, fg);
-    rect.max.x + 5.0
+    rect.max.x + 6.0
 }
 
 fn elide(painter: &egui::Painter, text: &str, font: FontId, max_w: f32) -> String {
