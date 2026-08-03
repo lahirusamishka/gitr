@@ -94,9 +94,15 @@ pub struct App {
     pub pending_file_diff: Arc<std::sync::Mutex<Option<(String, String, bool)>>>,
     pub context_branch: Option<String>,
     pub context_tag: Option<String>,
+    pub context_row: Option<usize>,
     pub show_rename: bool,
     pub rename_old: String,
     pub rename_new: String,
+    pub show_create_branch: bool,
+    pub create_branch_name: String,
+    pub create_branch_from: String,
+    pub create_branch_checkout: bool,
+    pub create_branch_error: Option<String>,
     pub confirm_delete: Option<String>,
     pub confirm_delete_tag: Option<String>,
     pub del_origin: bool,
@@ -205,9 +211,15 @@ impl App {
             pending_file_diff: Arc::new(std::sync::Mutex::new(None)),
             context_branch: None,
             context_tag: None,
+            context_row: None,
             show_rename: false,
             rename_old: String::new(),
             rename_new: String::new(),
+            show_create_branch: false,
+            create_branch_name: String::new(),
+            create_branch_from: String::new(),
+            create_branch_checkout: true,
+            create_branch_error: None,
             confirm_delete: None,
             confirm_delete_tag: None,
             del_origin: false,
@@ -907,6 +919,77 @@ impl eframe::App for App {
             _ => {}
         }
 
+        if self.show_create_branch {
+            let from = self.create_branch_from.clone();
+            let repo_path = self.repo_path.clone();
+            let mut close = false;
+            egui::Window::new("Create branch")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .default_width(400.0)
+                .show(ctx, |ui| {
+                    ui.set_min_width(400.0);
+                    ui.label(format!("Create branch from \"{from}\":"));
+                    ui.add_space(2.0);
+                    ui.add_sized([ui.available_width(), 24.0], egui::TextEdit::singleline(&mut self.create_branch_name).hint_text("new branch name"));
+                    ui.add_space(2.0);
+                    ui.checkbox(&mut self.create_branch_checkout, "checkout the new branch");
+                    if let Some(err) = &self.create_branch_error {
+                        ui.add_space(4.0);
+                        ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), err);
+                    }
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        let btn_w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+                        if ui.add_sized([btn_w, 32.0], egui::Button::new("Create")).clicked() {
+                            let name = self.create_branch_name.trim().to_string();
+                            if name.is_empty() {
+                                self.create_branch_error = Some("Enter a branch name".to_string());
+                            } else {
+                                self.create_branch_error = None;
+                                let exists = Command::new("git").current_dir(&repo_path).args(&["rev-parse", "--verify", &format!("refs/heads/{name}")]).output().map(|o| o.status.success()).unwrap_or(false);
+                                if exists {
+                                    self.create_branch_error = Some(format!("Branch \"{name}\" already exists"));
+                                } else {
+                                    let do_checkout = self.create_branch_checkout;
+                                    let mut error = String::new();
+                                    if do_checkout {
+                                        let head = Command::new("git").current_dir(&repo_path).args(&["rev-parse", "HEAD"]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+                                        let from_sha = Command::new("git").current_dir(&repo_path).args(&["rev-parse", &from]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+                                        let has_changes = !Command::new("git").current_dir(&repo_path).args(&["status", "--porcelain"]).output().map(|o| o.stdout.is_empty()).unwrap_or(true);
+                                        if from_sha != head && has_changes {
+                                            let _ = Command::new("git").current_dir(&repo_path).args(&["stash"]).output();
+                                        }
+                                        match Command::new("git").current_dir(&repo_path).args(&["checkout", "-b", &name, &from]).output() {
+                                            Ok(o) if o.status.success() => { self.reload(); close = true; }
+                                            Ok(o) => { error = String::from_utf8_lossy(&o.stderr).trim().to_string(); }
+                                            Err(e) => { error = format!("{e}"); }
+                                        }
+                                    } else {
+                                        match Command::new("git").current_dir(&repo_path).args(&["branch", &name, &from]).output() {
+                                            Ok(o) if o.status.success() => { self.reload(); close = true; }
+                                            Ok(o) => { error = String::from_utf8_lossy(&o.stderr).trim().to_string(); }
+                                            Err(e) => { error = format!("{e}"); }
+                                        }
+                                    }
+                                    if !error.is_empty() {
+                                        self.create_branch_error = Some(error);
+                                    }
+                                }
+                            }
+                        }
+                        if ui.add_sized([btn_w, 32.0], egui::Button::new("Cancel")).clicked() {
+                            close = true;
+                        }
+                    });
+                });
+            if close {
+                self.show_create_branch = false;
+                self.create_branch_error = None;
+            }
+        }
+
         if self.show_rename {
             let old = self.rename_old.clone();
             let repo_path = self.repo_path.clone();
@@ -1238,6 +1321,7 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
             let idx = ((pos.y - origin.y) / config::ROW_HEIGHT) as usize;
             (idx < app.rows.len()).then_some(idx)
         });
+        app.context_row = hover_row;
 
         if response.clicked() {
             if let Some(idx) = hover_row {
@@ -1375,30 +1459,45 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                     if ui.button("Apply stash").clicked() {
                         let _ = std::process::Command::new("git").current_dir(&app.repo_path).args(&["stash", "apply", branch]).output();
                         app.reload();
+                        ui.close_menu();
                     }
                     if ui.button("Drop stash").clicked() {
                         let _ = std::process::Command::new("git").current_dir(&app.repo_path).args(&["stash", "drop", branch]).output();
                         app.reload();
+                        ui.close_menu();
                     }
                 } else {
                     let is_current = branch == &app.current_branch;
                     let is_remote = branch.contains('/');
                     if is_remote {
-                        if ui.button("Checkout as local branch").clicked() {
-                            let local = branch.split('/').last().unwrap_or(branch);
-                            let _ = std::process::Command::new("git").current_dir(&app.repo_path).args(&["checkout", "-b", local, branch]).output();
-                            app.reload();
+                        if ui.button("Create branch…").clicked() {
+                            app.show_create_branch = true;
+                            app.create_branch_from = branch.clone();
+                            app.create_branch_name = branch.split('/').last().unwrap_or(branch).to_string();
+                            app.create_branch_checkout = true;
+                            app.create_branch_error = None;
+                            ui.close_menu();
                         }
                     } else {
                         if ui.button("Checkout").clicked() {
                             app.confirm_checkout = Some(branch.clone());
+                            ui.close_menu();
                         }
                     }
                     if !is_remote {
+                        if ui.button("Create branch…").clicked() {
+                            app.show_create_branch = true;
+                            app.create_branch_from = branch.clone();
+                            app.create_branch_name = String::new();
+                            app.create_branch_checkout = false;
+                            app.create_branch_error = None;
+                            ui.close_menu();
+                        }
                         if ui.button("Rename branch…").clicked() {
                             app.rename_old = branch.clone();
                             app.rename_new = branch.clone();
                             app.show_rename = true;
+                            ui.close_menu();
                         }
                         if !is_current && ui.button("Delete branch").clicked() {
                             app.confirm_delete = Some(branch.clone());
@@ -1406,6 +1505,7 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                             app.del_force = false;
                             app.delete_error = None;
                             app.delete_rx = None;
+                            ui.close_menu();
                         }
                     }
                 }
@@ -1417,9 +1517,30 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                 if ui.button("Push tag").clicked() {
                     let _ = std::process::Command::new("git").current_dir(&app.repo_path).args(&["push", "origin", tag]).output();
                     app.reload();
+                    ui.close_menu();
                 }
                 if ui.button("Delete tag").clicked() {
                     app.confirm_delete_tag = Some(tag.clone());
+                    ui.close_menu();
+                }
+            }
+            if app.context_branch.is_none() && app.context_tag.is_none() {
+                if let Some(row_idx) = app.context_row {
+                    if let Some(row) = app.rows.get(row_idx) {
+                        if !row.is_working && !row.is_stash {
+                            ui.set_min_width(200.0);
+                            ui.label(egui::RichText::new(format!("{}  {}", row.short, row.summary)).strong().size(12.0).color(Color32::from_rgb(0xcd, 0xd6, 0xf4)));
+                            ui.separator();
+                            if ui.button("Create branch…").clicked() {
+                                app.show_create_branch = true;
+                                app.create_branch_from = row.oid.to_string();
+                                app.create_branch_name = String::new();
+                                app.create_branch_checkout = false;
+                                app.create_branch_error = None;
+                                ui.close_menu();
+                            }
+                        }
+                    }
                 }
             }
         });
@@ -1450,7 +1571,7 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                     Color32::from_rgb(0xcb, 0xa6, 0xf7)
                 } else if is_current { Color32::from_rgb(0xa6, 0xe3, 0xa1) } else { Color32::from_rgb(0x89, 0xb4, 0xfa) };
                 let pill_start = tx;
-                let pill_label = format!("{b}");
+                let pill_label = if is_current { format!("* {b}") } else { format!("{b}") };
                 tx = draw_pill(ui, tx, yc, &pill_label, Color32::from_rgb(0x1e, 0x1e, 0x2e), bg, is_current);
                 if let Some(pos) = response.hover_pos() {
                     let row_top = origin.y + i as f32 * config::ROW_HEIGHT;
