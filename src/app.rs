@@ -25,6 +25,48 @@ pub enum UpdateState {
     UpToDate,
 }
 
+pub struct DeleteResult {
+    ok: bool,
+    error: String,
+}
+
+struct LoadingButton {
+    label: &'static str,
+}
+
+impl egui::Widget for LoadingButton {
+    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
+        let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), egui::Sense::hover());
+        let visuals = ui.style().interact(&resp);
+        ui.painter().rect(
+            rect,
+            ui.visuals().widgets.inactive.rounding,
+            visuals.bg_fill,
+            visuals.bg_stroke,
+        );
+        let spinner_size = 14.0;
+        let spacing = ui.spacing().item_spacing.x;
+        let font = FontId::proportional(14.0);
+        let text_w = ui.painter().layout_no_wrap(self.label.to_owned(), font.clone(), visuals.text_color()).size().x;
+        let total_w = spinner_size + spacing + text_w;
+        let start_x = rect.center().x - total_w / 2.0;
+        let spinner_rect = Rect::from_min_size(
+            Pos2::new(start_x, rect.center().y - spinner_size / 2.0),
+            Vec2::splat(spinner_size),
+        );
+        ui.ctx().request_repaint();
+        egui::Spinner::new().size(spinner_size).paint_at(ui, spinner_rect);
+        ui.painter().text(
+            Pos2::new(start_x + spinner_size + spacing, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            self.label,
+            font,
+            visuals.text_color(),
+        );
+        resp
+    }
+}
+
 pub struct App {
     pub repo_path: String,
     pub rows: Vec<CommitRow>,
@@ -58,6 +100,9 @@ pub struct App {
     pub confirm_delete: Option<String>,
     pub confirm_delete_tag: Option<String>,
     pub del_origin: bool,
+    pub del_force: bool,
+    pub delete_rx: Option<std::sync::mpsc::Receiver<DeleteResult>>,
+    pub delete_error: Option<String>,
     pub confirm_checkout: Option<String>,
     pub update_state: UpdateState,
     pub pending_update: Arc<std::sync::Mutex<Option<UpdateState>>>,
@@ -166,6 +211,9 @@ impl App {
             confirm_delete: None,
             confirm_delete_tag: None,
             del_origin: false,
+            del_force: false,
+            delete_rx: None,
+            delete_error: None,
             confirm_checkout: None,
             update_state: UpdateState::Idle,
             pending_update: Arc::new(std::sync::Mutex::new(None)),
@@ -905,25 +953,80 @@ impl eframe::App for App {
                     ui.set_min_width(400.0);
                     ui.label(format!("Delete \"{del_branch}\"?"));
                     ui.add_space(4.0);
-                    ui.checkbox(&mut self.del_origin, "also delete from origin");
+                    ui.add_enabled_ui(self.delete_rx.is_none(), |ui| {
+                        ui.checkbox(&mut self.del_origin, "also delete from origin");
+                        ui.add_space(2.0);
+                        ui.checkbox(&mut self.del_force, "force delete (branch not merged)");
+                    });
+                    if let Some(err) = &self.delete_error {
+                        ui.add_space(4.0);
+                        ui.colored_label(Color32::from_rgb(0xf3, 0x8b, 0xa8), err);
+                    }
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         let btn_w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-                        if ui.add_sized([btn_w, 32.0], egui::Button::new("Yes")).clicked() {
-                            let _ = std::process::Command::new("git").current_dir(&repo_path).args(&["branch", "-d", &del_branch]).output();
-                            if self.del_origin {
-                                let _ = std::process::Command::new("git").current_dir(&repo_path).args(&["push", "origin", "--delete", &del_branch]).output();
-                            }
-                            self.reload();
-                            close = true;
+                        if self.delete_rx.is_some() {
+                            ui.add_sized([btn_w, 32.0], LoadingButton { label: "Deleting…" });
+                        } else if ui.add_sized([btn_w, 32.0], egui::Button::new("Yes")).clicked() {
+                            self.delete_error = None;
+                            let (tx, rx) = std::sync::mpsc::channel();
+                            let branch = del_branch.clone();
+                            let rp = repo_path.clone();
+                            let force = self.del_force;
+                            let del_origin = self.del_origin;
+                            std::thread::spawn(move || {
+                                let flag = if force { "-D" } else { "-d" };
+                                let mut error = String::new();
+                                let mut ok = match Command::new("git").current_dir(&rp).args(&["branch", flag, &branch]).output() {
+                                    Ok(o) if o.status.success() => true,
+                                    Ok(o) => {
+                                        error = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                                        false
+                                    }
+                                    Err(e) => {
+                                        error = format!("{e}");
+                                        false
+                                    }
+                                };
+                                if ok && del_origin {
+                                    match Command::new("git").current_dir(&rp).args(&["push", "origin", "--delete", &branch]).output() {
+                                        Ok(o) if o.status.success() => {}
+                                        Ok(o) => {
+                                            error = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                                            ok = false;
+                                        }
+                                        Err(e) => {
+                                            error = format!("{e}");
+                                            ok = false;
+                                        }
+                                    }
+                                }
+                                let _ = tx.send(DeleteResult { ok, error });
+                            });
+                            self.delete_rx = Some(rx);
                         }
                         if ui.add_sized([btn_w, 32.0], egui::Button::new("No")).clicked() {
                             close = true;
                         }
                     });
                 });
+            if let Some(rx) = &self.delete_rx {
+                if let Ok(res) = rx.try_recv() {
+                    if res.ok {
+                        self.reload();
+                        close = true;
+                    } else {
+                        self.delete_error = Some(res.error);
+                    }
+                    self.delete_rx = None;
+                } else {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                }
+            }
             if close {
                 self.confirm_delete = None;
+                self.delete_error = None;
+                self.delete_rx = None;
             }
         }
 
@@ -1300,6 +1403,9 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                         if !is_current && ui.button("Delete branch").clicked() {
                             app.confirm_delete = Some(branch.clone());
                             app.del_origin = false;
+                            app.del_force = false;
+                            app.delete_error = None;
+                            app.delete_rx = None;
                         }
                     }
                 }
