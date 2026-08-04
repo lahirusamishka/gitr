@@ -18,11 +18,10 @@ pub const GRAPH_PAD_RIGHT: f32 = 16.0;
 
 pub const COL_AUTHOR: f32 = 130.0;
 pub const COL_DATE: f32 = 140.0;
-pub const COL_HASH: f32 = 85.0;
+pub const COL_INITIALS: f32 = 28.0;
 
 pub const C_TEXT: Color32 = Color32::from_rgb(0xcd, 0xd6, 0xf4);
 pub const C_SUBTEXT: Color32 = Color32::from_rgb(0x93, 0x99, 0xb2);
-pub const C_HASH: Color32 = Color32::from_rgb(0xf9, 0xe2, 0xaf);
 pub const C_SEL: Color32 = Color32::from_rgba_premultiplied(0x31, 0x32, 0x44, 200);
 pub const C_HOVER: Color32 = Color32::from_rgba_premultiplied(0x28, 0x28, 0x38, 120);
 

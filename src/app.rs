@@ -1362,15 +1362,14 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
         let y_center = |i: usize| origin.y + i as f32 * config::ROW_HEIGHT + config::ROW_HEIGHT / 2.0;
         let x_lane = |l: usize| origin.x + config::GRAPH_PAD_LEFT + l as f32 * config::LANE_WIDTH;
 
-        let meta_w = config::COL_HASH + 8.0 + config::COL_DATE + 8.0 + config::COL_AUTHOR + 12.0 + config::GRAPH_PAD_RIGHT;
+        let meta_w = config::COL_AUTHOR + 8.0 + config::COL_DATE + 12.0 + config::GRAPH_PAD_RIGHT;
         let space_for_msg = avail_w - text_col_x - meta_w;
-        let show_hash = space_for_msg > 120.0;
         let show_date = space_for_msg > 220.0;
-        let show_author = space_for_msg > 340.0;
-        let x_hash = rect.max.x - config::GRAPH_PAD_RIGHT;
-        let x_date = if show_date { x_hash - config::COL_HASH - 8.0 } else { x_hash };
-        let x_author = if show_author { x_date - config::COL_DATE - 8.0 } else { x_date };
-        let x_msg_end = if show_author { x_author - config::COL_AUTHOR - 12.0 } else { avail_w - 10.0 };
+        let show_initials = !show_date;
+        let author_col_w = if show_initials { config::COL_INITIALS } else { config::COL_AUTHOR };
+        let x_author = rect.max.x - config::GRAPH_PAD_RIGHT;
+        let x_date = x_author - author_col_w - 8.0;
+        let x_msg_end = if show_date { x_date - config::COL_DATE - 12.0 } else { x_author - author_col_w - 12.0 };
 
         for i in 0..app.rows.len() {
             let top = origin.y + i as f32 * config::ROW_HEIGHT;
@@ -1623,16 +1622,15 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                 msg_color,
             );
 
-            if show_author {
-                let author = elide(&painter, &row.author, FontId::proportional(11.5), config::COL_AUTHOR);
-                painter.text(
-                    Pos2::new(x_author, yc),
-                    egui::Align2::RIGHT_CENTER,
-                    &author,
-                    FontId::proportional(11.5),
-                    config::C_SUBTEXT,
-                );
-            }
+            let name = if show_initials { initials(&row.author) } else { row.author.clone() };
+            let author = elide(&painter, &name, FontId::proportional(11.5), author_col_w);
+            painter.text(
+                Pos2::new(x_author, yc),
+                egui::Align2::RIGHT_CENTER,
+                &author,
+                FontId::proportional(11.5),
+                config::C_SUBTEXT,
+            );
 
             if show_date {
                 painter.text(
@@ -1641,16 +1639,6 @@ fn draw_graph_inner(app: &mut App, ui: &mut egui::Ui) {
                     commit::format_time(row.time, row.offset_min),
                     FontId::proportional(11.5),
                     config::C_SUBTEXT,
-                );
-            }
-
-            if show_hash {
-                painter.text(
-                    Pos2::new(x_hash, yc),
-                    egui::Align2::RIGHT_CENTER,
-                    &row.short,
-                    FontId::monospace(11.0),
-                    config::C_HASH,
                 );
             }
         }
@@ -1673,6 +1661,14 @@ fn draw_pill(ui: &egui::Ui, x: f32, y: f32, label: &str, fg: Color32, bg: Color3
     painter.rect_filled(rect, 2.0, bg);
     painter.galley(rect.min + Vec2::new(6.0, (h - galley.size().y) / 2.0), galley, fg);
     rect.max.x + 6.0
+}
+
+fn initials(name: &str) -> String {
+    name.split_whitespace()
+        .filter_map(|w| w.chars().next())
+        .take(2)
+        .map(|c| c.to_ascii_uppercase())
+        .collect()
 }
 
 fn elide(painter: &egui::Painter, text: &str, font: FontId, max_w: f32) -> String {
